@@ -1,65 +1,348 @@
-import Image from "next/image";
+'use client';
+
+/**
+ * Home page: Map view with location search and venue listings
+ */
+
+import { useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
+import { LocationSearch } from '@/components/LocationSearch';
+import { VenueCard } from '@/components/VenueCard';
+import { AddVenueModal } from '@/components/AddVenueModal';
+import { VenueWithDetails } from '@/lib/supabase';
+import { List, Map as MapIcon, Plus, X } from 'lucide-react';
+
+// Dynamic import to avoid server-side Leaflet issues
+const Map = dynamic(() => import('@/components/Map').then(mod => ({ default: mod.Map })), {
+  ssr: false,
+  loading: () => <div className="absolute inset-0 bg-gray-200 animate-pulse" />,
+});
+
+const DEFAULT_LAT = 1.3521; // Singapore center
+const DEFAULT_LNG = 103.8198;
 
 export default function Home() {
+  const [userLat, setUserLat] = useState(DEFAULT_LAT);
+  const [userLng, setUserLng] = useState(DEFAULT_LNG);
+  const [venues, setVenues] = useState<VenueWithDetails[]>([]);
+  const [selectedVenue, setSelectedVenue] = useState<VenueWithDetails | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
+  const [searchRadius, setSearchRadius] = useState(50000); // 50km to show all venues
+  const [hasSearched, setHasSearched] = useState(true); // Start as searched to show results
+  const [showSearchResults, setShowSearchResults] = useState(false); // Show search results panel
+  const [showAddVenueModal, setShowAddVenueModal] = useState(false); // Show add venue modal
+  const [filters, setFilters] = useState<Record<string, boolean>>({
+    has_lock: false,
+    has_changing_table: false,
+    has_sink: false,
+    has_power_outlet: false,
+    stroller_friendly: false,
+    dad_friendly: false,
+    has_diaper_mat: false,
+    can_buy_diaper: false,
+  });
+
+  // Fetch nearest venues when location or radius changes
+  useEffect(() => {
+    fetchNearestVenues();
+  }, [userLat, userLng, searchRadius]);
+
+  // Watch user location for real-time tracking
+  useEffect(() => {
+    if (!navigator.geolocation) {
+      console.warn('Geolocation not available in this browser/context');
+      return;
+    }
+
+    const watchId = navigator.geolocation.watchPosition(
+      position => {
+        const { latitude, longitude } = position.coords;
+        setUserLat(latitude);
+        setUserLng(longitude);
+      },
+      error => {
+        console.warn('Location watch error:', {
+          code: error?.code,
+          message: error?.message,
+          timestamp: new Date().toISOString()
+        });
+        // Don't show repeated errors - just continue with default location
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 30000,
+        maximumAge: 5000, // Update every 5 seconds max
+      }
+    );
+
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, []);
+
+  const fetchNearestVenues = async () => {
+    setLoading(true);
+    setHasSearched(true);
+    try {
+      // Build filter query string
+      const activeFilters = Object.entries(filters)
+        .filter(([, active]) => active)
+        .map(([key]) => key)
+        .join(',');
+
+      const url = new URL('/api/nearest-venues', window.location.origin);
+      url.searchParams.append('lat', userLat.toString());
+      url.searchParams.append('lng', userLng.toString());
+      url.searchParams.append('radius', searchRadius.toString());
+      if (activeFilters) {
+        url.searchParams.append('filters', activeFilters);
+      }
+
+      const response = await fetch(url.toString());
+      if (!response.ok) {
+        throw new Error('Failed to fetch venues');
+      }
+
+      const data = await response.json();
+      setVenues(data);
+      setSelectedVenue(null);
+    } catch (err) {
+      console.error('Error fetching venues:', err);
+      setVenues([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFilterChange = (key: string) => {
+    setFilters(prev => ({
+      ...prev,
+      [key]: !prev[key],
+    }));
+  };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+    <div className="h-screen flex flex-col bg-gray-100">
+      {/* Header */}
+      <header className="bg-white shadow-sm border-b z-10">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">
+              🏥 Nursing Room Finder
+            </h1>
+            <p className="text-sm text-gray-600">Find breastfeeding rooms near you</p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowAddVenueModal(true)}
+              className="p-2 hover:bg-gray-100 rounded-lg transition flex items-center gap-2 text-black font-semibold"
+              title="Add nursing room"
             >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+              <Plus size={20} />
+              <span className="text-sm">Add Room</span>
+            </button>
+            <button
+              onClick={() => setViewMode(viewMode === 'map' ? 'list' : 'map')}
+              className="p-2 hover:bg-gray-100 rounded-lg transition text-black"
+              title={viewMode === 'map' ? 'Switch to list' : 'Switch to map'}
             >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+              {viewMode === 'map' ? (
+                <List size={20} />
+              ) : (
+                <MapIcon size={20} />
+              )}
+            </button>
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
+      </header>
+
+      {/* Main content */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Map view */}
+        {viewMode === 'map' && (
+          <div className="flex-1 relative">
+            {/* Map - background layer */}
+            <Map
+              userLat={userLat}
+              userLng={userLng}
+              venues={venues}
+              selectedVenueId={selectedVenue?.id}
+              onVenueSelect={setSelectedVenue}
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+
+            {/* UI Overlay - separate from map to avoid z-index issues */}
+            <div className="absolute inset-0 pointer-events-none">
+              {/* Search panel - top left */}
+              <div className="absolute top-4 left-4 right-4 max-w-sm pointer-events-auto">
+                <LocationSearch
+                  onLocationFound={(lat, lng) => {
+                    setUserLat(lat);
+                    setUserLng(lng);
+                  }}
+                  onSearchComplete={() => {
+                    setSearchRadius(2000); // Reset to 2km for nearby results
+                    setShowSearchResults(true); // Show search results panel
+                  }}
+                  isLoading={loading}
+                />
+              </div>
+
+              {/* Filters - bottom left */}
+              <div className="absolute bottom-4 left-4 max-w-sm bg-white rounded-lg shadow-md p-3 pointer-events-auto">
+                <p className="text-xs font-semibold text-gray-600 mb-2">Filters</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {Object.entries(filters).map(([key, active]) => (
+                    <label
+                      key={key}
+                      className="flex items-center gap-2 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={active}
+                        onChange={() => handleFilterChange(key)}
+                        className="w-4 h-4 rounded"
+                      />
+                      <span className="text-xs text-gray-700">
+                        {key.replace(/_/g, ' ')}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Venue card - bottom right */}
+              {selectedVenue && (
+                <div className="absolute bottom-4 right-4 max-w-sm pointer-events-auto">
+                  <div className="relative">
+                    <button
+                      onClick={() => setSelectedVenue(null)}
+                      className="absolute -top-2 -right-2 bg-red-500 hover:bg-red-600 text-white rounded-full p-1"
+                    >
+                      <X size={16} />
+                    </button>
+                    <VenueCard
+                      venue={selectedVenue}
+                      userLat={userLat}
+                      userLng={userLng}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Search results panel - bottom of map (like Google Maps) */}
+              {showSearchResults && (
+                <div className="absolute bottom-4 left-4 right-4 max-w-2xl pointer-events-auto bg-white rounded-lg shadow-lg pointer-events-auto">
+                  <div className="p-4">
+                    {/* Close button */}
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="font-semibold text-gray-900">Nursing Rooms Nearby</h3>
+                      <button
+                        onClick={() => {
+                          setShowSearchResults(false);
+                          setSearchRadius(50000); // Back to showing all venues
+                        }}
+                        className="text-gray-500 hover:text-gray-700"
+                      >
+                        <X size={20} />
+                      </button>
+                    </div>
+
+                    {/* Venues list */}
+                    <div className="max-h-64 overflow-y-auto space-y-2">
+                      {venues.length === 0 ? (
+                        <p className="text-gray-600 text-sm">No nursing rooms found nearby</p>
+                      ) : (
+                        venues.map(venue => (
+                          <button
+                            key={venue.id}
+                            onClick={() => setSelectedVenue(venue)}
+                            className="w-full text-left p-3 hover:bg-gray-50 rounded-lg transition border border-gray-200"
+                          >
+                            <div className="flex justify-between items-start">
+                              <div className="flex-1">
+                                <p className="font-semibold text-gray-900">{venue.name}</p>
+                                <p className="text-sm text-gray-600">{venue.address}</p>
+                              </div>
+                              <span className="text-sm font-semibold text-blue-600 ml-2">
+                                {venue.distance_meters < 1000
+                                  ? `${Math.round(venue.distance_meters)}m`
+                                  : `${(venue.distance_meters / 1000).toFixed(1)}km`}
+                              </span>
+                            </div>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* List view */}
+        {viewMode === 'list' && (
+          <div className="flex-1 flex flex-col bg-white">
+            <div className="flex-shrink-0 border-b p-4">
+              <LocationSearch
+                onLocationFound={(lat, lng) => {
+                  setUserLat(lat);
+                  setUserLng(lng);
+                }}
+                isLoading={loading}
+              />
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              {loading ? (
+                <div className="p-4 text-center text-gray-500">Loading...</div>
+              ) : venues.length === 0 ? (
+                <div className="p-4 text-center text-gray-500">
+                  No venues found
+                </div>
+              ) : (
+                <div className="divide-y">
+                  {venues.map(venue => (
+                    <button
+                      key={venue.id}
+                      onClick={() => {
+                        setSelectedVenue(venue);
+                        setViewMode('map');
+                      }}
+                      className="w-full text-left p-4 hover:bg-gray-50 transition"
+                    >
+                      <div className="flex justify-between items-start gap-2">
+                        <div className="flex-1">
+                          <h3 className="font-semibold text-gray-900">
+                            {venue.name}
+                          </h3>
+                          <p className="text-sm text-gray-600 mt-1">
+                            {venue.address}
+                          </p>
+                        </div>
+                        <span className="text-lg font-semibold text-blue-600 flex-shrink-0">
+                          {venue.distance_meters < 1000
+                            ? `${Math.round(
+                                venue.distance_meters
+                              )}m`
+                            : `${(venue.distance_meters / 1000).toFixed(1)}km`}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Add Venue Modal */}
+      <AddVenueModal
+        isOpen={showAddVenueModal}
+        onClose={() => setShowAddVenueModal(false)}
+        userLat={userLat}
+        userLng={userLng}
+      />
     </div>
   );
 }
