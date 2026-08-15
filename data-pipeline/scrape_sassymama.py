@@ -31,8 +31,16 @@ HEADERS = {
 # Matches headings like "1. 313@Somerset" or "12. Changi Airport"
 HEADING_RE = re.compile(r"^\s*\d+\.\s*(.+)$")
 
-# Matches a Singapore postal address ending in "Singapore NNNNNN"
-ADDRESS_RE = re.compile(r"([^,]+(?:,[^,]+)*?,\s*Singapore\s*\d{6})", re.IGNORECASE)
+# Matches a Singapore postal address ending in "Singapore NNNNNN".
+#
+# The segment class excludes periods as well as commas, and each segment is
+# length-capped. Without that, `[^,]+` anchors at the start of the chunk and
+# swallows every preceding sentence up to the postal code — which put whole
+# paragraphs of prose into known_address, and left a second copy of the address
+# behind in the notes once the oversized match was stripped out.
+ADDRESS_RE = re.compile(
+    r"((?:[^,.]{1,60},\s*){0,3}[^,.]{1,60},\s*Singapore\s*\d{6})", re.IGNORECASE
+)
 
 
 def main():

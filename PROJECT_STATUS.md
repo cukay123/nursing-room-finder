@@ -1,9 +1,10 @@
 # Project Status — Nursing Room Finder
 
-**Audited:** 14 August 2026 · **Last updated:** 15 August 2026
+**Audited:** 14 August 2026 · **Last updated:** 16 August 2026
 **Work period:** 3–4 August 2026 (two days)
-**Status:** Production build passes. Several mechanical defects fixed (see [Known issues](#known-issues));
-admin authentication is still missing, so this is **not yet safe to deploy publicly**.
+**Status:** Production build passes. Mechanical defects fixed, pipeline under version control, and the
+dataset independently cross-checked (74 of 85 coordinates corroborated). **Admin authentication is
+still missing, so this is not yet safe to deploy publicly.**
 
 > **This document supersedes the other status/checklist docs in this repo.** `BUILD_SUMMARY.md`,
 > `NEXT_STEPS.md`, `PRODUCTION_CHECKLIST.md`, `TESTING_GUIDE.md`, and the README describe features
@@ -19,22 +20,31 @@ queue reviews and approves those submissions.
 
 The project has two distinct halves:
 
-1. **A Python data pipeline** — scraped and geocoded the 85-venue seed dataset. Lives one level up,
-   in `~/Desktop/projectfun/`, **outside this git repository** (see [Not in version control](#not-in-version-control)).
+1. **A Python data pipeline** — scraped and geocoded the 85-venue seed dataset. Now lives in
+   `data-pipeline/`, under version control. See `data-pipeline/README.md` for the full flow.
 2. **This Next.js app** — serves the data and handles crowdsourcing.
 
 ---
 
 ## Half 1: The data pipeline
 
-Four standalone Python scripts, run manually in sequence. All live in the parent directory.
+Standalone Python scripts in `data-pipeline/`, run manually in sequence.
 
 | Order | Script | Does | Output |
 |---|---|---|---|
 | 1 | `scrape_bmsg.py` | Scrapes breastfeeding.org.sg's table-based directory | `bmsg_nursing_rooms.csv` (20 rows) |
 | 2 | `scrape_sassymama.py` | Regex-scrapes SassyMama's long-form article | `sassymama_nursing_rooms.csv` (75 rows) |
 | 3 | `merge_sources.py` | Fuzzy-dedupes by name (`SequenceMatcher` ratio ≥ 0.75) | `seed_nursing_rooms_merged.csv` (85 rows) |
+| — | *manual curation, no script* | Hand-adds addresses and tidies amenity notes | `seed_nursing_rooms.csv` (85 rows) |
 | 4 | `geocode_onemap.py` | OneMap Search API → address, postal code, lat/lng, confidence flag | `geocoded_nursing_rooms.csv` (85 rows) |
+
+Plus two maintenance scripts: `repair_sassymama.py` (one-off, already applied) and
+`verify_geocoding.py` (non-destructive cross-check, re-runnable).
+
+**The manual curation step is the one to know about.** `seed_nursing_rooms.csv` is *not* the output of
+`merge_sources.py` despite the name — it is hand-curated, has all 85 addresses where the auto-merge
+manages only 52, and it is what actually feeds geocoding. Regenerating it from the merge would lose 33
+hand-added addresses.
 
 Dependencies: `requests`, `beautifulsoup4`. No requirements file exists.
 
@@ -48,25 +58,46 @@ Dependencies: `requests`, `beautifulsoup4`. No requirements file exists.
 | Both sources | 11 | | `LOW_REVIEW` | 19 |
 | BMSG only | 9 | | `NOMINATIM` | 47 |
 
+### Verification status
+
+`verify_geocoding.py` cross-checked all 85 coordinates against a fresh OneMap lookup on
+16 August 2026. Results, worst-first, are in `data-pipeline/geocode_review.csv`:
+
+| Verdict | Count | Meaning |
+|---|---|---|
+| `CONFIRMED` | 74 | OneMap agrees within 150 m |
+| `DRIFT` | 9 | 150 m – 1 km apart; mostly large sites where that is inside the footprint |
+| `CONFLICT` | 1 | Changi Airport — 1,246 m; OneMap matched "aircraft flyover", a poor match |
+| `NO_ONEMAP_MATCH` | 1 | Millennia Walk |
+
+**11 venues need human eyes**, not the ~38 originally estimated from the confidence labels. The
+`DRIFT` set is Sentosa, Marina Bay Sands, Jurong East Bus Interchange, Singapore Zoo, Institute of
+Mental Health, Harbourfront Centre, Marina Square, Ng Teng Fong Hospital, and Jurong Point — all
+sprawling sites where the building centroid and the nursing room genuinely differ. For those, the
+useful correction is a floor/wing note rather than a new coordinate.
+
 ### Data quality caveats
 
 - **The 47 `NOMINATIM` rows cannot be reproduced from the scripts in this project.**
   `geocode_onemap.py` contains no Nominatim code at all — that fallback pass was run ad hoc and never
-  saved. Re-running the pipeline end to end will not regenerate `geocoded_nursing_rooms.csv`.
-- **SassyMama's `known_address` and `amenities_notes` columns are effectively swapped.**
-  `amenities_notes` holds address strings (`"313@Somerset , 313 Orchard Rd, Singapore 238895, www..."`)
-  while `known_address` holds the `"Location: Levels B3..."` prose blob. Geocoding still mostly worked
-  because an address appears at the end of the prose, but the keyword-based amenity parser in
-  `scripts/import-venues.ts` is reading address text for 65 of 85 rows — so the amenity booleans on
-  those venues are unreliable.
-- **~38 of 85 rows were never spot-checked.** The `LOW_REVIEW` flag exists specifically so the
-  geocoding can be diffed before being trusted (see the docstring in `geocode_onemap.py`); that review
-  never happened, and the `NOMINATIM` rows carry no confidence signal at all.
+  saved. Re-running the pipeline end to end will not regenerate `geocoded_nursing_rooms.csv`. Anything
+  that touches this file must preserve existing coordinates rather than overwrite them.
+- **21 of 75 SassyMama rows scraped completely empty** — heading found, no body. They carry data in
+  the curated seed only because addresses were added by hand.
+- **`dad_friendly` and `has_diaper_mat` are false for all 85 venues, and correctly so.** The source
+  notes contain no diaper-mat wording at all, and the only venue mentioning gender says "small area
+  inside female restroom" — which is the *opposite* of dad-friendly. This is absent data, not a parser
+  bug. Both filters will return nothing until the underlying data improves.
 - **Scraper fragility.** `scrape_sassymama.py` parses by text pattern rather than CSS structure — its
   own docstring notes it will break if the article layout changes. It supplies 76% of the dataset.
-- **Duplicate files.** `geocode_onemap (1).py` is byte-identical to `geocode_onemap.py`.
-  `seed_nursing_rooms (1).csv` and `(2).csv` are identical to each other and differ from
-  `seed_nursing_rooms.csv`. These are browser-download artifacts and can be deleted.
+- **Duplicate files** are parked in `data-pipeline/duplicates/` rather than deleted. Safe to remove
+  once the canonical set is confirmed.
+
+> **Correction (16 Aug 2026).** An earlier version of this document stated that the amenity booleans
+> were unreliable for 65 of 85 rows because the parser was reading address text. That was wrong. The
+> column corruption was real but confined to the *intermediate* scraper output; `seed_nursing_rooms.csv`
+> is hand-curated and clean, so the corruption never reached `geocoded_nursing_rooms.csv` or the
+> database. The scraper bug is fixed regardless, since it would have affected any future re-scrape.
 
 ---
 
@@ -259,15 +290,11 @@ public traffic.
 
 ---
 
-## Not in version control
+## Version control — resolved
 
-**The entire Python data pipeline and all CSV data live in the parent directory
-(`~/Desktop/projectfun/`), which is not a git repository.** That includes all four scrapers and
-`geocoded_nursing_rooms.csv` — the file that cannot be regenerated (see data quality caveats above).
-
-Those files exist in exactly one place, on one disk, with no history. Moving them into this repo under
-a `data-pipeline/` directory, or initialising a repository at the `projectfun/` level, would be worth
-doing.
+The Python pipeline and all CSV data previously lived in `~/Desktop/projectfun/`, outside any git
+repository — one disk, no history, including the `geocoded_nursing_rooms.csv` that cannot be
+regenerated. Everything now lives in `data-pipeline/` and is committed.
 
 ---
 
@@ -297,24 +324,27 @@ Must be settled before this is exposed to public traffic:
 
 - [ ] **Authentication on `/admin` and both admin API routes** (issue #1). Nothing else on this list
       matters as much — both routes run on the service role key, which bypasses RLS entirely.
-- [ ] **Apply migration 006 to a live database** and confirm postal code search still works
-      (`supabase start && supabase db reset`).
+- [ ] **Manually review the 11 flagged venues** in `data-pipeline/geocode_review.csv`, starting with
+      Changi Airport (`CONFLICT`) and Millennia Walk (`NO_ONEMAP_MATCH`).
 - [ ] **Stand up production Supabase** — hosted project, `supabase db push`, then import the seed CSV.
       Note the importer needs `tsx`, not `ts-node` (issue #7).
-- [ ] **Verify the dataset.** 38 of 85 venues have never been checked, and amenity booleans are
-      unreliable for the 65 SassyMama rows. For this app the failure mode is a parent walking to a
-      room that isn't there — weight this above any remaining feature work.
 - [ ] **Restrict submission reads and add rate limiting** (issues #12, #13).
+- [ ] **Decide what to do about `dad_friendly` and `has_diaper_mat`** — both are correctly false for
+      every venue because the source data says nothing about them. Consider hiding those two
+      checkboxes until the data supports them, rather than shipping filters that always return zero.
 - [x] ~~Fix the production build~~ (issue #8)
 - [x] ~~Fix the Dockerfile Node version~~ (issue #9)
 - [x] ~~Close the anonymous write holes~~ (issues #10, #11)
 - [x] ~~Make the amenity filters work~~ (issues #2, #3)
+- [x] ~~Apply migration 006 to a live database~~ — verified 15 Aug: all six migrations apply from
+      scratch, anon writes rejected with 401, reads unaffected, postal code lookup still works
+- [x] ~~Get the pipeline and CSVs into version control~~
+- [x] ~~Populate the diaper amenity columns in the importer~~ — `can_buy_diaper` now flags 6 venues
+- [x] ~~Cross-check the geocoding~~ — 74 of 85 confirmed within 150 m
 
 Worth doing, but not blocking:
 
-1. **Get the pipeline and CSVs into version control** (see above); the seed data is currently
-   unbacked and partly irreproducible.
-2. **Either build `/api/confirm-venue` or remove the verification UI** (issue #4) so the interface
+1. **Either build `/api/confirm-venue` or remove the verification UI** (issue #4) so the interface
    stops promising something it does not do.
 3. **Reconcile the docs with reality** — fix or delete the Docker Compose section, the test command,
    and the PWA claim in the README, and consolidate the nine markdown files.

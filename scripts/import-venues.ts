@@ -67,6 +67,8 @@ interface RoomDetailsInsert {
   has_power_outlet: boolean;
   stroller_friendly: boolean;
   dad_friendly: boolean;
+  has_diaper_mat: boolean;
+  can_buy_diaper: boolean;
   notes: string;
 }
 
@@ -82,7 +84,16 @@ function parseAmenities(notes: string): Partial<RoomDetailsInsert> {
     has_sink: /sink|wash|basin/.test(lower),
     has_power_outlet: /power|outlet|electrical|socket/.test(lower),
     stroller_friendly: /stroller|pram|fit.*stroller|space.*stroller|accommodate.*stroller/.test(lower),
-    dad_friendly: /dad|father|gender|not.*female|male.*welcome|all.*gender/.test(lower),
+    // Careful with bare /male/ here: "female" contains it, and a room described as
+    // "inside female restroom" is the opposite of dad-friendly. No venue in the
+    // current dataset carries positive dad-friendly wording, so this stays false
+    // throughout until the source notes say otherwise.
+    dad_friendly: /\bdad|father|all.*gender|male.*welcome|not.*inside.*female/.test(lower),
+    // Columns added in migration 004 but never populated by this script.
+    // Vocabulary below is taken from the actual notes: "diaper vending machine",
+    // "diaper dispenser", "coin diaper dispensers".
+    has_diaper_mat: /diaper\s*mat|changing\s*mat|nappy\s*mat/.test(lower),
+    can_buy_diaper: /diaper\s*(vending|dispenser)|vending\s*machine|coin\s*diaper/.test(lower),
   };
 }
 
@@ -147,6 +158,8 @@ async function importVenues() {
           has_power_outlet: amenities.has_power_outlet || false,
           stroller_friendly: amenities.stroller_friendly || false,
           dad_friendly: amenities.dad_friendly || false,
+          has_diaper_mat: amenities.has_diaper_mat || false,
+          can_buy_diaper: amenities.can_buy_diaper || false,
           notes: row.amenities_notes?.trim() || '',
         });
       })
