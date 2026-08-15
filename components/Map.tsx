@@ -174,11 +174,11 @@ export function Map({
         .on('click', () => onVenueSelect(venue));
 
       // Add hover effect
-      marker.on('mouseover', function() {
-        this.setIcon(createVenueIcon(true, isVerified));
+      marker.on('mouseover', () => {
+        marker.setIcon(createVenueIcon(true, isVerified));
       });
-      marker.on('mouseout', function() {
-        this.setIcon(createVenueIcon(isSelected, isVerified));
+      marker.on('mouseout', () => {
+        marker.setIcon(createVenueIcon(isSelected, isVerified));
       });
 
       markersRef.current.set(venue.id, marker);

@@ -58,6 +58,10 @@ export async function GET(req: NextRequest) {
               return v.stroller_friendly;
             case 'dad_friendly':
               return v.dad_friendly;
+            case 'has_diaper_mat':
+              return v.has_diaper_mat;
+            case 'can_buy_diaper':
+              return v.can_buy_diaper;
             default:
               return true;
           }

@@ -1,5 +1,6 @@
 # Multi-stage build for Next.js
-FROM node:18-alpine AS base
+# Next 16 requires Node >=20.9.0 (see engines in node_modules/next/package.json)
+FROM node:22-alpine AS base
 
 # Install dependencies only when needed
 FROM base AS deps

@@ -66,14 +66,26 @@ export async function GET(req: NextRequest) {
     const latitude = parseFloat(result0.LATITUDE);
     const longitude = parseFloat(result0.LONGITUDE);
 
-    // Cache it
-    await supabase
-      .from('postal_code_cache')
-      .upsert(
-        { postal_code: postalCode, latitude, longitude },
-        { onConflict: 'postal_code' }
-      )
-      .throwOnError();
+    // Cache it. Migration 006 revoked anon write access to postal_code_cache
+    // (it was publicly writable), so this goes through the service role.
+    // Best-effort: a failed cache write shouldn't fail a lookup we already resolved.
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    if (serviceKey) {
+      const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceKey);
+      const { error: cacheError } = await admin
+        .from('postal_code_cache')
+        .upsert(
+          { postal_code: postalCode, latitude, longitude },
+          { onConflict: 'postal_code' }
+        );
+
+      if (cacheError) {
+        console.error('Postal code cache write failed:', cacheError);
+      }
+    } else {
+      console.warn('SUPABASE_SERVICE_ROLE_KEY not set — skipping postal code cache write');
+    }
 
     return NextResponse.json({ latitude, longitude, cached: false });
   } catch (err) {

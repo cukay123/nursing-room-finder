@@ -25,7 +25,13 @@ export default function AdminPage() {
   const [error, setError] = useState('');
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editData, setEditData] = useState<Record<string, any>>({});
+  // Typed to match Submission['payload'] so edits can be written straight back
+  // into the submissions list without widening its type.
+  const [editData, setEditData] = useState<Submission['payload']>({
+    name: '',
+    latitude: 0,
+    longitude: 0,
+  });
 
   useEffect(() => {
     fetchSubmissions();

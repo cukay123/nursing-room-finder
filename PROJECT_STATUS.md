@@ -1,8 +1,9 @@
 # Project Status — Nursing Room Finder
 
-**Audited:** 14 August 2026
-**Work period:** 3–4 August 2026 (two days), untouched since
-**Status:** Working MVP with several unfinished features and one significant security gap. Not ready to deploy publicly.
+**Audited:** 14 August 2026 · **Last updated:** 15 August 2026
+**Work period:** 3–4 August 2026 (two days)
+**Status:** Production build passes. Several mechanical defects fixed (see [Known issues](#known-issues));
+admin authentication is still missing, so this is **not yet safe to deploy publicly**.
 
 > **This document supersedes the other status/checklist docs in this repo.** `BUILD_SUMMARY.md`,
 > `NEXT_STEPS.md`, `PRODUCTION_CHECKLIST.md`, `TESTING_GUIDE.md`, and the README describe features
@@ -126,6 +127,7 @@ in source.
 ## Known issues
 
 Ordered by severity. Each is a real defect verified against the code, not a to-do.
+Items marked **FIXED** were resolved on 15 August 2026; the fix is noted inline.
 
 ### 1. Admin is completely unauthenticated — **critical**
 
@@ -136,22 +138,25 @@ Both routes run on `SUPABASE_SERVICE_ROLE_KEY`, which bypasses RLS entirely. Any
 `/admin` can approve, reject, and rewrite venue data. **This must be fixed before the app is exposed
 publicly.**
 
-### 2. The amenity filters do nothing — **high**
+### 2. The amenity filters do nothing — **FIXED**
 
-`app/page.tsx:47`
+`app/page.tsx:49`
 
-The fetch effect depends on `[userLat, userLng, searchRadius]`, not `filters`. Toggling a checkbox
-updates state but never triggers a refetch, and nothing filters the results client-side either. The
-entire filter panel is dead UI. Fix: add `filters` to the dependency array (or add an explicit Apply
-button).
+The fetch effect depended on `[userLat, userLng, searchRadius]`, not `filters`. Toggling a checkbox
+updated state but never triggered a refetch, and nothing filtered the results client-side either — the
+entire filter panel was dead UI.
 
-### 3. Two filters are also unimplemented server-side — **medium**
+*Fixed:* `filters` added to the dependency array.
 
-`app/api/nearest-venues/route.ts:46`
+### 3. Two filters were also unimplemented server-side — **FIXED**
 
-The filter `switch` has no `case` for `has_diaper_mat` or `can_buy_diaper`, so both fall through to
-`default: return true` and are silently ignored. This bug is currently masked by issue #2 and will
-surface the moment that one is fixed.
+`app/api/nearest-venues/route.ts:61`
+
+The filter `switch` had no `case` for `has_diaper_mat` or `can_buy_diaper`, so both fell through to
+`default: return true` and were silently ignored. This was masked by issue #2 and would have surfaced
+the moment that one was fixed.
+
+*Fixed:* both cases added.
 
 ### 4. Room verification is a stub — **medium**
 
@@ -188,6 +193,70 @@ are no automated tests in the project.
 The header comment says `npx ts-node scripts/import-venues.ts`. `ts-node` is not in the dependencies,
 and the script is ESM-only (`import.meta.url`), so it would need `tsx` rather than `ts-node`.
 
+### 8. The production build failed — **FIXED**
+
+`app/admin/page.tsx:28`, `components/Map.tsx:177`
+
+`npm run build` failed type checking, which would have broken the deploy on every platform. Two
+separate errors, the second hidden behind the first:
+
+- `editData` was typed `Record<string, any>` but assigned into `payload`, which has a stricter shape.
+- Two Leaflet handlers used `function() { this.setIcon(...) }`; `this` was implicitly `any`.
+
+*Fixed:* `editData` typed as `Submission['payload']`; handlers converted to arrow functions closing
+over `marker`. Build now passes — 11 static pages, 6 dynamic API routes.
+
+### 9. The Dockerfile targeted an unsupported Node version — **FIXED**
+
+`Dockerfile:2`
+
+Base image was `node:18-alpine`, but Next 16.2.12 declares `engines: {"node": ">=20.9.0"}`. Any
+Docker-based deploy would have failed.
+
+*Fixed:* bumped to `node:22-alpine`.
+
+### 10. `postal_code_cache` was publicly writable — **FIXED**
+
+`supabase/migrations/003`, now `006_lock_down_anon_writes.sql`
+
+It was the only table migration 001 never enabled RLS on, and 003 granted `anon` both `INSERT` and
+`UPDATE`. Since `/api/postal-code-to-coords` serves the cache before falling back to OneMap, anyone
+holding the public anon key could rewrite the coordinates that any postal code resolves to — pointing
+searches wherever they liked.
+
+*Fixed:* migration 006 revokes the anon grants and enables RLS with a read-only policy. The route now
+writes through the service role, and the write is best-effort so a cache failure can't fail a lookup
+that already resolved.
+
+### 11. `room_details` accepted anonymous inserts — **FIXED**
+
+`supabase/migrations/005`, now `006_lock_down_anon_writes.sql`
+
+Migration 005 granted `anon` `INSERT` with a `with check (true)` policy. Nothing needed it:
+`/api/submit-venue` writes only to `submissions`, and admin approval inserts `room_details` via the
+service role.
+
+*Fixed:* migration 006 revokes the grant and drops the policy.
+
+### 12. The submissions queue is world-readable — **open, medium**
+
+`supabase/migrations/001`, `005`
+
+`submissions_select_all using (true)` plus an `anon` `SELECT` grant means anyone with the public anon
+key can read every pending and rejected submission, including free-text notes. Restrict reads to the
+service role unless there's a reason to expose the queue.
+
+### 13. No rate limiting on submissions — **open, medium**
+
+`app/api/submit-venue/route.ts`
+
+Anonymous, unauthenticated, and unthrottled. Add rate limiting or a captcha before opening it to
+public traffic.
+
+> **Migration 006 has not yet been applied to a live database.** It was written but not executed —
+> Docker was not running at the time. Verify with `supabase start && supabase db reset` before
+> relying on it, and confirm postal code search still works afterwards.
+
 ---
 
 ## Not in version control
@@ -209,7 +278,7 @@ separate files:
 
 | File | Notes |
 |---|---|
-| `README.md` | Main entry point. Claims working filters, `npm run test`, and functioning Docker Compose — none accurate. |
+| `README.md` | Main entry point. Still claims `npm run test`, functioning Docker Compose, and PWA support — none accurate. There is no `manifest.json` and no service worker; `public/` holds only the default Next SVGs. |
 | `BUILD_SUMMARY.md` | Feature checklist. Marks verification and filters complete; they are not. |
 | `NEXT_STEPS.md` | Launch checklist. Says "Next.js 15" (it is 16) and "ready to import". |
 | `DEPLOYMENT.md` | Per-platform deploy guides (Render, Railway, Fly.io, Vercel). |
@@ -222,16 +291,38 @@ Consolidating these into README + DEPLOYMENT + this file would remove most of th
 
 ---
 
-## Suggested next steps
+## Pre-deploy checklist
 
-1. **Add authentication to `/admin` and both admin API routes** (issue #1). Blocks any public deploy.
-2. **Fix the filter refetch** (issue #2) — a one-line change to a dependency array — then add the two
-   missing filter cases (issue #3).
-3. **Get the pipeline and CSVs into version control** (see above); the seed data is currently
+Must be settled before this is exposed to public traffic:
+
+- [ ] **Authentication on `/admin` and both admin API routes** (issue #1). Nothing else on this list
+      matters as much — both routes run on the service role key, which bypasses RLS entirely.
+- [ ] **Apply migration 006 to a live database** and confirm postal code search still works
+      (`supabase start && supabase db reset`).
+- [ ] **Stand up production Supabase** — hosted project, `supabase db push`, then import the seed CSV.
+      Note the importer needs `tsx`, not `ts-node` (issue #7).
+- [ ] **Verify the dataset.** 38 of 85 venues have never been checked, and amenity booleans are
+      unreliable for the 65 SassyMama rows. For this app the failure mode is a parent walking to a
+      room that isn't there — weight this above any remaining feature work.
+- [ ] **Restrict submission reads and add rate limiting** (issues #12, #13).
+- [x] ~~Fix the production build~~ (issue #8)
+- [x] ~~Fix the Dockerfile Node version~~ (issue #9)
+- [x] ~~Close the anonymous write holes~~ (issues #10, #11)
+- [x] ~~Make the amenity filters work~~ (issues #2, #3)
+
+Worth doing, but not blocking:
+
+1. **Get the pipeline and CSVs into version control** (see above); the seed data is currently
    unbacked and partly irreproducible.
-4. **Either build `/api/confirm-venue` or remove the verification UI** (issue #4) so the interface
+2. **Either build `/api/confirm-venue` or remove the verification UI** (issue #4) so the interface
    stops promising something it does not do.
-5. **Reconcile the docs with reality** — fix or delete the Docker Compose section and the test command
-   in the README, and consolidate the nine markdown files.
-6. **Re-verify the 38 unchecked geocoded rows**, and re-derive amenity booleans for the 65 SassyMama
-   venues once the swapped-column issue is corrected.
+3. **Reconcile the docs with reality** — fix or delete the Docker Compose section, the test command,
+   and the PWA claim in the README, and consolidate the nine markdown files.
+4. **Settle the data rights question.** The dataset is scraped from BMSG and SassyMama and the repo is
+   public. Attribution at minimum; permission ideally. Also check OneMap's API terms for production
+   use. (OpenStreetMap tile attribution is already correct in `Map.tsx:48`.)
+5. **Clean up lint.** `npx eslint app components lib scripts` reports 15 problems (6 errors) — unused
+   imports, two `any` types, and a `Date.now()` call during render in `VenueCard.tsx:64` that can
+   produce unstable output across re-renders. None block the build. Note `npm run lint` also scans
+   `supabase/.temp/`, which floods the output with ~160 errors from a minified vendored file; scope
+   the script to source directories or add an eslint ignore.

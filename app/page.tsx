@@ -43,10 +43,10 @@ export default function Home() {
     can_buy_diaper: false,
   });
 
-  // Fetch nearest venues when location or radius changes
+  // Fetch nearest venues when location, radius, or active filters change
   useEffect(() => {
     fetchNearestVenues();
-  }, [userLat, userLng, searchRadius]);
+  }, [userLat, userLng, searchRadius, filters]);
 
   // Watch user location for real-time tracking
   useEffect(() => {
