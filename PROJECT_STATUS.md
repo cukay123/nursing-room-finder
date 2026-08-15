@@ -2,9 +2,10 @@
 
 **Audited:** 14 August 2026 · **Last updated:** 16 August 2026
 **Work period:** 3–4 August 2026 (two days)
-**Status:** Production build passes. Mechanical defects fixed, pipeline under version control, and the
-dataset independently cross-checked (74 of 85 coordinates corroborated). **Admin authentication is
-still missing, so this is not yet safe to deploy publicly.**
+**Status:** Production build passes. Admin surface authenticated, anonymous write and read holes
+closed, submissions rate-limited, pipeline under version control, dataset cross-checked (74 of 85
+coordinates corroborated). **Remaining before launch: set `ADMIN_PASSWORD`, stand up production
+Supabase, review 11 flagged venues, and settle data rights.**
 
 > **This document supersedes the other status/checklist docs in this repo.** `BUILD_SUMMARY.md`,
 > `NEXT_STEPS.md`, `PRODUCTION_CHECKLIST.md`, `TESTING_GUIDE.md`, and the README describe features
@@ -111,9 +112,11 @@ Supabase (PostgreSQL 16 + PostGIS) · Lucide icons. Roughly 2,700 lines across 2
 ### Layout
 
 ```
+proxy.ts                    Auth gate for /admin and /api/admin (Next 16's renamed Middleware)
 app/
   page.tsx                  Map + list toggle, filter panel, add-venue modal
   admin/page.tsx            Submission review queue with inline editing
+  admin/login/page.tsx      Password form
   api/
     nearest-venues/         PostGIS RPC proxy + amenity filtering
     postal-code-to-coords/  OneMap lookup, cached in postal_code_cache
@@ -121,14 +124,18 @@ app/
     submit-venue/           Anonymous submission intake
     admin/submissions/      Pending queue (service role)
     admin/approve-submission/  Approve → creates venue + room_details (service role)
+    admin/login, admin/logout  Session cookie mint / clear
 components/
   Map.tsx                   Leaflet, dynamically imported (ssr: false)
   LocationSearch.tsx        GPS button + postal code input
   VenueCard.tsx             Amenities, directions, verification buttons
   AddVenueModal.tsx         Crowdsourcing form
 lib/supabase.ts             Browser client + shared types
+lib/admin-auth.ts           HMAC session tokens (Web Crypto, Edge-compatible)
+lib/rate-limit.ts           Fixed-window per-IP limiter
 scripts/import-venues.ts    CSV → Supabase importer
-supabase/migrations/        5 SQL migrations
+data-pipeline/              Scrapers, CSVs, geocode verification
+supabase/migrations/        7 SQL migrations
 ```
 
 ### Database
@@ -139,15 +146,16 @@ The core query is the PostGIS function `nearest_venues(lat, lng, radius)` — `S
 filter, `ST_Distance` for ordering, backed by a GiST index on `venues.location`. Migration 004 redefines
 it to add the two diaper amenities.
 
-Migrations 002, 003, and 005 are all permission patches that progressively loosen RLS so anonymous
-users can submit without authentication. The original `submissions_insert_auth` policy
-(`auth.uid() = submitted_by`) was dropped in 005 and replaced with `submitted_by is null`.
+Migrations 002, 003, and 005 progressively loosened RLS so anonymous users could submit without
+authentication. Migrations 006 and 007 tighten that back up: anon keeps INSERT on `submissions` (the
+crowdsourcing form needs it) but loses every other write, and loses read access to the queue.
 
 ### Environment
 
 `.env.local` currently points at `http://localhost:54321` — the local Supabase dev stack, which is not
 running. Required variables: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
-`SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_ONEMAP_API_URL`.
+`SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_ONEMAP_API_URL`, and `ADMIN_PASSWORD` (required — the
+admin surface returns 503 without it).
 
 Secrets are correctly gitignored (`.env*` in `.gitignore`; `.temp` and `.branches` in
 `supabase/.gitignore`, which covers `supabase/.temp/start-secrets/`). Nothing sensitive is hardcoded
@@ -160,14 +168,30 @@ in source.
 Ordered by severity. Each is a real defect verified against the code, not a to-do.
 Items marked **FIXED** were resolved on 15 August 2026; the fix is noted inline.
 
-### 1. Admin is completely unauthenticated — **critical**
+### 1. Admin was completely unauthenticated — **FIXED**
 
-`app/admin/page.tsx`, `app/api/admin/submissions/route.ts`, `app/api/admin/approve-submission/route.ts`
+`proxy.ts`, `lib/admin-auth.ts`, `app/api/admin/login/route.ts`, `app/admin/login/page.tsx`
 
-There is no password, session check, or guard of any kind on the admin page or either admin API route.
-Both routes run on `SUPABASE_SERVICE_ROLE_KEY`, which bypasses RLS entirely. Anyone who visits
-`/admin` can approve, reject, and rewrite venue data. **This must be fixed before the app is exposed
-publicly.**
+There was no password, session check, or guard of any kind on the admin page or either admin API
+route, both of which run on `SUPABASE_SERVICE_ROLE_KEY` and bypass RLS entirely. Anyone who visited
+`/admin` could approve, reject, and rewrite venue data.
+
+*Fixed:* `proxy.ts` (Next 16's renamed Middleware) gates `/admin/:path*` and `/api/admin/:path*`.
+The operator sets `ADMIN_PASSWORD`; a successful login mints an HMAC-signed, httpOnly session cookie
+carrying a 12-hour expiry. No server-side session store, so it deploys anywhere.
+
+Two properties worth keeping if this is ever rewritten:
+
+- **It fails closed.** No `ADMIN_PASSWORD` means 503 for the entire admin surface, including the login
+  route and any previously valid cookie. An unset variable must never mean "no gate".
+- **The API routes are gated, not just the page.** The routes are the part that matters; protecting
+  only the UI would leave the data open to any direct request.
+
+Verified: unauthenticated API 401, page 307 to login, wrong password 401, correct password 200 and
+subsequent access 200, forged cookie 401, and 503 across the board when the password is unset.
+
+**This is single-operator protection, not user accounts.** When real admin identities are needed,
+swap in Supabase Auth with an allowlist — `isAuthorized` and the proxy matcher are the only call sites.
 
 ### 2. The amenity filters do nothing — **FIXED**
 
@@ -269,20 +293,37 @@ service role.
 
 *Fixed:* migration 006 revokes the grant and drops the policy.
 
-### 12. The submissions queue is world-readable — **open, medium**
+### 12. The submissions queue was world-readable — **FIXED**
 
-`supabase/migrations/001`, `005`
+`supabase/migrations/007_restrict_submission_reads.sql`
 
-`submissions_select_all using (true)` plus an `anon` `SELECT` grant means anyone with the public anon
-key can read every pending and rejected submission, including free-text notes. Restrict reads to the
-service role unless there's a reason to expose the queue.
+`submissions_select_all using (true)` plus an `anon` `SELECT` grant meant anyone with the public anon
+key could read every pending and rejected submission, including the free-text notes people type into
+the add-a-room form.
 
-### 13. No rate limiting on submissions — **open, medium**
+*Fixed:* migration 007 revokes the anon grant and drops the public policy. Admin reads already go
+through the service role. A narrower policy is left in place for the `authenticated` role
+(`submitted_by = auth.uid()`) so that adding user accounts later cannot silently re-expose the queue.
 
-`app/api/submit-venue/route.ts`
+Note this required one code change: `/api/submit-venue` used `.insert(...).select()`, and reading the
+row back needs the SELECT permission that was just revoked, so submissions began failing with
+Postgres `42501`. The `.select()` is removed — the client only reads that response on failure.
 
-Anonymous, unauthenticated, and unthrottled. Add rate limiting or a captcha before opening it to
-public traffic.
+### 13. No rate limiting on submissions — **FIXED**
+
+`lib/rate-limit.ts`, `app/api/submit-venue/route.ts`
+
+Anonymous, unauthenticated, and unthrottled.
+
+*Fixed:* fixed-window limiter, 5 submissions per 10 minutes per client, returning 429 with
+`Retry-After`.
+
+Two caveats stated plainly, because the limiter is deliberately simple:
+
+- **State is per-process.** Several instances means several allowances, and a restart resets the
+  window. Adequate against casual spam; a shared store (Postgres, Upstash) is wanted for more.
+- **The client key is `x-forwarded-for`, which is spoofable** unless a trusted proxy sets it. In local
+  dev the header is absent, so every caller shares one bucket.
 
 > **Migration 006 has not yet been applied to a live database.** It was written but not executed —
 > Docker was not running at the time. Verify with `supabase start && supabase db reset` before
@@ -322,13 +363,13 @@ Consolidating these into README + DEPLOYMENT + this file would remove most of th
 
 Must be settled before this is exposed to public traffic:
 
-- [ ] **Authentication on `/admin` and both admin API routes** (issue #1). Nothing else on this list
-      matters as much — both routes run on the service role key, which bypasses RLS entirely.
+- [ ] **Set `ADMIN_PASSWORD` in the production environment.** The admin surface returns 503 until you
+      do — deliberately, so a missing variable can never mean an open door.
 - [ ] **Manually review the 11 flagged venues** in `data-pipeline/geocode_review.csv`, starting with
       Changi Airport (`CONFLICT`) and Millennia Walk (`NO_ONEMAP_MATCH`).
 - [ ] **Stand up production Supabase** — hosted project, `supabase db push`, then import the seed CSV.
       Note the importer needs `tsx`, not `ts-node` (issue #7).
-- [ ] **Restrict submission reads and add rate limiting** (issues #12, #13).
+- [ ] **Settle data rights** with BMSG and SassyMama; the repo is public.
 - [ ] **Decide what to do about `dad_friendly` and `has_diaper_mat`** — both are correctly false for
       every venue because the source data says nothing about them. Consider hiding those two
       checkboxes until the data supports them, rather than shipping filters that always return zero.
@@ -341,6 +382,9 @@ Must be settled before this is exposed to public traffic:
 - [x] ~~Get the pipeline and CSVs into version control~~
 - [x] ~~Populate the diaper amenity columns in the importer~~ — `can_buy_diaper` now flags 6 venues
 - [x] ~~Cross-check the geocoding~~ — 74 of 85 confirmed within 150 m
+- [x] ~~Authenticate the admin surface~~ (issue #1)
+- [x] ~~Restrict submission reads~~ (issue #12)
+- [x] ~~Rate-limit submissions~~ (issue #13)
 
 Worth doing, but not blocking:
 

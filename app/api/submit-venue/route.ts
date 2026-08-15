@@ -6,8 +6,28 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
+import { clientKey, rateLimit } from '@/lib/rate-limit';
+
+// Generous enough that a parent adding the few rooms they know will never notice,
+// tight enough that a script cannot fill the moderation queue unattended.
+const SUBMIT_LIMIT = 5;
+const SUBMIT_WINDOW_MS = 10 * 60 * 1000;
+
 export async function POST(req: NextRequest) {
   try {
+    const { allowed, retryAfter } = rateLimit(
+      `submit-venue:${clientKey(req)}`,
+      SUBMIT_LIMIT,
+      SUBMIT_WINDOW_MS
+    );
+
+    if (!allowed) {
+      return NextResponse.json(
+        { error: 'Too many submissions. Please try again shortly.' },
+        { status: 429, headers: { 'Retry-After': String(retryAfter) } }
+      );
+    }
+
     const body = await req.json();
 
     const {
@@ -43,8 +63,11 @@ export async function POST(req: NextRequest) {
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     );
 
-    // Create submission record
-    const { data, error } = await supabase
+    // Create submission record.
+    // No .select() here: migration 007 revoked anon SELECT on submissions, and
+    // reading the row back would need it. The client only reads this response on
+    // failure, so there is nothing to return.
+    const { error } = await supabase
       .from('submissions')
       .insert({
         submitted_by: null, // Anonymous for now
@@ -69,8 +92,7 @@ export async function POST(req: NextRequest) {
           notes,
           source: 'USER_SUBMITTED',
         },
-      })
-      .select();
+      });
 
     if (error) {
       console.error('Database error:', error);
@@ -83,7 +105,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       message: 'Venue submitted successfully',
-      data,
     });
   } catch (err) {
     console.error('API error:', err);

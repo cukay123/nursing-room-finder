@@ -54,6 +54,12 @@ export default function AdminPage() {
     }
   };
 
+  const handleLogout = async () => {
+    await fetch('/api/admin/logout', { method: 'POST' });
+    // Proxy will bounce the unauthenticated request on to the login page.
+    window.location.href = '/admin';
+  };
+
   const startEdit = (submission: Submission) => {
     setEditingId(submission.id);
     setEditData({ ...submission.payload });
@@ -125,9 +131,17 @@ export default function AdminPage() {
     <div className="min-h-screen bg-gray-100 p-8">
       <div className="max-w-6xl mx-auto">
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold text-gray-900">Admin Dashboard</h1>
-          <p className="text-gray-600 mt-2">Review and approve nursing room submissions</p>
+        <div className="mb-8 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-4xl font-bold text-gray-900">Admin Dashboard</h1>
+            <p className="text-gray-600 mt-2">Review and approve nursing room submissions</p>
+          </div>
+          <button
+            onClick={handleLogout}
+            className="shrink-0 text-sm font-medium text-gray-700 border rounded-lg px-3 py-2 bg-white hover:bg-gray-50 transition"
+          >
+            Sign out
+          </button>
         </div>
 
         {/* Stats */}

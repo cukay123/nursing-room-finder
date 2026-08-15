@@ -143,6 +143,7 @@ nursing-room-finder/
 NEXT_PUBLIC_SUPABASE_URL=http://localhost:54321
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
 SUPABASE_SERVICE_ROLE_KEY=eyJ...
+ADMIN_PASSWORD=local-dev-password
 ```
 
 ### Production
@@ -150,8 +151,12 @@ SUPABASE_SERVICE_ROLE_KEY=eyJ...
 NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
 SUPABASE_SERVICE_ROLE_KEY=eyJ...
+ADMIN_PASSWORD=<long random string>
 NODE_ENV=production
 ```
+
+`ADMIN_PASSWORD` is required. `/admin` and `/api/admin/*` return 503 without it — the gate fails
+closed on purpose, so a missing variable can never leave the admin surface open.
 
 ---
 
