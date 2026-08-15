@@ -222,7 +222,22 @@ exist. Consequently the `confirmations` table is permanently empty, and the "las
 indicator — which reads `last_confirmed_at` from that table via `nearest_venues` — will never show
 anything.
 
-### 5. `docker-compose up` cannot work as documented — **medium**
+### 5a. The Docker image itself — **VERIFIED WORKING**
+
+`Dockerfile`
+
+Built and run end to end on 16 August 2026. The image compiles, starts, serves the map with all 85
+venues, enforces the admin gate, and accepts the admin password — all from the container. 280 MB,
+multi-stage, non-root user, Next standalone output.
+
+Worth knowing: no `NEXT_PUBLIC_*` values are baked into the client bundle, because the browser never
+talks to Supabase directly — only types are imported from `lib/supabase.ts`, and every database call
+goes through a server-side API route. So the image carries no secrets and the same build artefact can
+be promoted between environments; all four variables are supplied at run time.
+
+This is the deployable path. Use it for Render, Railway, or Fly.io.
+
+### 5b. `docker-compose up` cannot work as documented — **medium**
 
 `docker-compose.yml`, `README.md`
 
