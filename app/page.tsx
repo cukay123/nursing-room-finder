@@ -4,7 +4,7 @@
  * Home page: Map view with location search and venue listings
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { LocationSearch } from '@/components/LocationSearch';
 import { VenueCard } from '@/components/VenueCard';
@@ -21,9 +21,28 @@ const Map = dynamic(() => import('@/components/Map').then(mod => ({ default: mod
 const DEFAULT_LAT = 1.3521; // Singapore center
 const DEFAULT_LNG = 103.8198;
 
+// Ignore GPS updates smaller than this. Consumer GPS jitters by tens of metres
+// while standing still, and every accepted update refetches the venue list.
+const MIN_MOVE_METRES = 100;
+
+function distanceMetres(lat1: number, lng1: number, lat2: number, lng2: number) {
+  const radius = 6371000;
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * radius * Math.asin(Math.sqrt(a));
+}
+
 export default function Home() {
   const [userLat, setUserLat] = useState(DEFAULT_LAT);
   const [userLng, setUserLng] = useState(DEFAULT_LNG);
+  // Bumped only by an explicit user action (location button, postal code search).
+  // The map watches this, not the coordinates, so background GPS never moves the view.
+  const [recenterAt, setRecenterAt] = useState(0);
+  const lastPositionRef = useRef<{ lat: number; lng: number } | null>(null);
   const [venues, setVenues] = useState<VenueWithDetails[]>([]);
   const [selectedVenue, setSelectedVenue] = useState<VenueWithDetails | null>(null);
   const [loading, setLoading] = useState(true);
@@ -38,7 +57,8 @@ export default function Home() {
     has_sink: false,
     has_power_outlet: false,
     stroller_friendly: false,
-    dad_friendly: false,
+    // dad_friendly deliberately omitted: no venue in the dataset carries the
+    // information, so the filter could only ever return an empty map.
     has_diaper_mat: false,
     can_buy_diaper: false,
   });
@@ -48,7 +68,15 @@ export default function Home() {
     fetchNearestVenues();
   }, [userLat, userLng, searchRadius, filters]);
 
-  // Watch user location for real-time tracking
+  // Watch user location for real-time tracking.
+  //
+  // Deliberately does NOT recentre the map. Doing so meant every GPS tick yanked
+  // the view back, so panning to look at another neighbourhood was impossible.
+  // The map recentres only on an explicit request (see recenterAt), while the
+  // blue "you are here" marker keeps following along.
+  //
+  // Small movements are also ignored, so standing still with a jittery GPS does
+  // not refetch the venue list every few seconds.
   useEffect(() => {
     if (!navigator.geolocation) {
       console.warn('Geolocation not available in this browser/context');
@@ -58,6 +86,13 @@ export default function Home() {
     const watchId = navigator.geolocation.watchPosition(
       position => {
         const { latitude, longitude } = position.coords;
+        const last = lastPositionRef.current;
+
+        if (last && distanceMetres(last.lat, last.lng, latitude, longitude) < MIN_MOVE_METRES) {
+          return;
+        }
+
+        lastPositionRef.current = { lat: latitude, lng: longitude };
         setUserLat(latitude);
         setUserLng(longitude);
       },
@@ -164,6 +199,7 @@ export default function Home() {
             <Map
               userLat={userLat}
               userLng={userLng}
+              recenterAt={recenterAt}
               venues={venues}
               selectedVenueId={selectedVenue?.id}
               onVenueSelect={setSelectedVenue}
@@ -177,6 +213,9 @@ export default function Home() {
                   onLocationFound={(lat, lng) => {
                     setUserLat(lat);
                     setUserLng(lng);
+                    lastPositionRef.current = { lat, lng };
+                    // Explicit request, so this one does move the map.
+                    setRecenterAt(Date.now());
                   }}
                   onSearchComplete={() => {
                     setSearchRadius(2000); // Reset to 2km for nearby results

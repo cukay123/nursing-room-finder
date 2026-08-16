@@ -213,14 +213,51 @@ the moment that one was fixed.
 
 *Fixed:* both cases added.
 
-### 4. Room verification is a stub — **medium**
+### 4. Room verification was a stub — **FIXED**
 
-`components/VenueCard.tsx:37`
+`app/api/confirm-venue/route.ts`, `components/VenueCard.tsx`,
+`supabase/migrations/008_confirmations_only_count_positive.sql`
 
-The thumbs up/down buttons are wired to a `// TODO: Call /api/confirm-venue`. That endpoint does not
-exist. Consequently the `confirmations` table is permanently empty, and the "last verified X days ago"
-indicator — which reads `last_confirmed_at` from that table via `nearest_venues` — will never show
-anything.
+The thumbs up/down buttons pointed at a `// TODO`, so the `confirmations` table stayed empty and
+"verified X days ago" could never appear. "Report Issue" and "Write Review" had no click handler at all.
+
+*Fixed:*
+
+- `/api/confirm-venue` records a confirmation through the service role (anon has no INSERT, and the
+  original policy demands `auth.uid() = user_id`, which anonymous reporters cannot satisfy).
+  Rate-limited to 20 per 10 minutes.
+- Yes/No now post, with success and error feedback shown in the card.
+- "Report Issue" opens a note box and files a negative confirmation with the text.
+- **"Write Review" was removed.** There is no reviews table anywhere in the schema, so the button
+  could not be made to work without building a feature; leaving a dead control was the worse option.
+
+Migration 008 was needed first: `last_confirmed_at` was `max(created_at)` over *all* confirmations,
+ignoring `still_there`. Once the buttons started writing rows, reporting a room as gone would have
+made the card announce "✅ Verified today" — the opposite of what the reporter said. It now counts
+only positive confirmations, and exposes `negative_reports` separately.
+
+### 4b. The map snapped back to the user's location — **FIXED**
+
+`app/page.tsx`, `components/Map.tsx`
+
+`Map.tsx` called `setView` whenever the coordinates changed, and `watchPosition` updated them every
+few seconds, so panning away was impossible — the view was yanked back constantly. The user marker had
+the mirror-image bug: created once and then never moved.
+
+*Fixed:* the map recentres only on an explicit `recenterAt` bump (location button, postal code
+search); background GPS just moves the marker. GPS updates under 100 m are ignored entirely, so a
+jittery signal no longer refetches the venue list while standing still.
+
+### 4c. `dad_friendly` shown on every venue as "Women Only" — **FIXED**
+
+`components/VenueCard.tsx`, `app/page.tsx`
+
+The flag is false for all 85 venues because the source data never mentions it — so the card rendered
+"Women Only" on every room, asserting as fact something nobody had checked, and the filter could only
+ever return an empty map.
+
+*Fixed:* removed from both the card and the filter panel. The column and API field remain, so it can
+return when there is real data behind it.
 
 ### 5a. The Docker image itself — **VERIFIED WORKING**
 

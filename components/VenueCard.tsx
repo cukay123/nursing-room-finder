@@ -31,12 +31,52 @@ interface VenueCardProps {
 
 export function VenueCard({ venue, onClose, userLat, userLng }: VenueCardProps) {
   const [confirmLoading, setConfirmLoading] = useState(false);
+  const [feedback, setFeedback] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  const [showIssueBox, setShowIssueBox] = useState(false);
+  const [issueNotes, setIssueNotes] = useState('');
 
-  const handleConfirm = async (stillThere: boolean) => {
+  const sendConfirmation = async (stillThere: boolean, notes?: string) => {
     setConfirmLoading(true);
-    // TODO: Call /api/confirm-venue endpoint
-    // await fetch('/api/confirm-venue', { method: 'POST', body: JSON.stringify({ venue_id: venue.id, still_there: stillThere }) })
-    setConfirmLoading(false);
+    setFeedback(null);
+
+    try {
+      const response = await fetch('/api/confirm-venue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ venueId: venue.id, stillThere, notes }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'Could not send your report');
+      }
+
+      setFeedback({
+        kind: 'ok',
+        text: stillThere
+          ? 'Thanks — marked as still accurate.'
+          : 'Thanks for flagging it. We will take a look.',
+      });
+      setShowIssueBox(false);
+      setIssueNotes('');
+    } catch (err) {
+      setFeedback({
+        kind: 'error',
+        text: err instanceof Error ? err.message : 'Could not send your report',
+      });
+    } finally {
+      setConfirmLoading(false);
+    }
+  };
+
+  const handleConfirm = (stillThere: boolean) => sendConfirmation(stillThere);
+
+  const handleReportIssue = () => {
+    if (!showIssueBox) {
+      setShowIssueBox(true);
+      return;
+    }
+    sendConfirmation(false, issueNotes);
   };
 
   const handleGetDirections = () => {
@@ -173,17 +213,12 @@ export function VenueCard({ venue, onClose, userLat, userLng }: VenueCardProps) 
               </span>
             </div>
           )}
-          {venue.dad_friendly !== undefined && (
-            <div className="flex items-center gap-2 text-sm">
-              <Users
-                size={16}
-                className={venue.dad_friendly ? 'text-green-600' : 'text-gray-300'}
-              />
-              <span className={venue.dad_friendly ? 'text-gray-900' : 'text-gray-400'}>
-                {venue.dad_friendly ? 'All Welcome' : 'Women Only'}
-              </span>
-            </div>
-          )}
+          {/*
+            dad_friendly is intentionally not shown. The source data says nothing
+            about it for any venue, so the flag is false everywhere — which made
+            this render "Women Only" on all 85 rooms, stating as fact something
+            nobody had checked. Restore it only alongside real data.
+          */}
           {venue.has_diaper_mat !== undefined && (
             <div className="flex items-center gap-2 text-sm">
               <Package
@@ -238,6 +273,17 @@ export function VenueCard({ venue, onClose, userLat, userLng }: VenueCardProps) 
             No
           </button>
         </div>
+
+        {feedback && (
+          <p
+            role="status"
+            className={`text-sm font-medium ${
+              feedback.kind === 'ok' ? 'text-green-700' : 'text-red-600'
+            }`}
+          >
+            {feedback.text}
+          </p>
+        )}
       </div>
 
       {/* Get Directions - Primary Button */}
@@ -248,14 +294,41 @@ export function VenueCard({ venue, onClose, userLat, userLng }: VenueCardProps) 
         🗺️ Get Directions
       </button>
 
-      {/* Other Actions */}
-      <div className="flex gap-2 pt-2">
-        <button className="flex-1 text-sm text-blue-600 hover:text-blue-700 py-2 font-medium bg-blue-50 rounded-lg transition">
-          🚨 Report Issue
-        </button>
-        <button className="flex-1 text-sm text-purple-600 hover:text-purple-700 py-2 font-medium bg-purple-50 rounded-lg transition">
-          ⭐ Write Review
-        </button>
+      {/* Report an issue: a negative confirmation, optionally with detail */}
+      <div className="pt-2 space-y-2">
+        {showIssueBox && (
+          <textarea
+            value={issueNotes}
+            onChange={e => setIssueNotes(e.target.value)}
+            maxLength={500}
+            rows={3}
+            autoFocus
+            placeholder="What's wrong? e.g. room is locked, moved to level 3, no longer exists"
+            className="w-full border rounded-lg px-3 py-2 text-sm text-black focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        )}
+
+        <div className="flex gap-2">
+          <button
+            onClick={handleReportIssue}
+            disabled={confirmLoading}
+            className="flex-1 text-sm text-blue-600 hover:text-blue-700 disabled:text-gray-400 py-2 font-medium bg-blue-50 rounded-lg transition"
+          >
+            {showIssueBox ? '📨 Send report' : '🚨 Report Issue'}
+          </button>
+
+          {showIssueBox && (
+            <button
+              onClick={() => {
+                setShowIssueBox(false);
+                setIssueNotes('');
+              }}
+              className="px-4 text-sm text-gray-600 hover:text-gray-800 py-2 font-medium bg-gray-100 rounded-lg transition"
+            >
+              Cancel
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

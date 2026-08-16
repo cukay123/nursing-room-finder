@@ -13,6 +13,8 @@ import { VenueWithDetails } from '@/lib/supabase';
 interface MapProps {
   userLat: number;
   userLng: number;
+  /** Timestamp bumped by an explicit user request to recentre. */
+  recenterAt?: number;
   venues: VenueWithDetails[];
   selectedVenueId?: string;
   onVenueSelect: (venue: VenueWithDetails) => void;
@@ -21,12 +23,14 @@ interface MapProps {
 export function Map({
   userLat,
   userLng,
+  recenterAt = 0,
   venues,
   selectedVenueId,
   onVenueSelect,
 }: MapProps) {
   const mapRef = useRef<L.Map | null>(null);
   const markersRef = useRef<globalThis.Map<string, L.Marker>>(new globalThis.Map());
+  const userMarkerRef = useRef<L.Marker | null>(null);
 
   // Initialize map - Focus on Singapore
   useEffect(() => {
@@ -76,7 +80,7 @@ export function Map({
         </svg>
       `.trim();
 
-      L.marker([userLat, userLng], {
+      userMarkerRef.current = L.marker([userLat, userLng], {
         icon: L.icon({
           iconUrl: `data:image/svg+xml;base64,${btoa(userMarkerSvg)}`,
           iconSize: [32, 32],
@@ -87,10 +91,20 @@ export function Map({
         .addTo(mapRef.current)
         .bindPopup('📍 Your Location');
     } else {
-      // Update map center when coordinates change
-      mapRef.current.setView([userLat, userLng], 14);
+      // Move the "you are here" marker, but leave the view where the user put it.
+      // Recentring here is what made the map snap back on every GPS tick.
+      userMarkerRef.current?.setLatLng([userLat, userLng]);
     }
   }, [userLat, userLng]);
+
+  // Recentre only when explicitly asked (location button, postal code search).
+  useEffect(() => {
+    if (recenterAt && mapRef.current) {
+      mapRef.current.setView([userLat, userLng], 15);
+    }
+    // userLat/userLng intentionally excluded: this must fire on request only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recenterAt]);
 
   // Create custom icon with nursing symbol
   const createVenueIcon = (isSelected: boolean, isVerified: boolean) => {
