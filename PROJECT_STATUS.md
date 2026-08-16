@@ -235,6 +235,23 @@ ignoring `still_there`. Once the buttons started writing rows, reporting a room 
 made the card announce "✅ Verified today" — the opposite of what the reporter said. It now counts
 only positive confirmations, and exposes `negative_reports` separately.
 
+### 4-0. Reported problems had nowhere to go — **FIXED**
+
+`supabase/migrations/010_resolvable_reports.sql`, `app/api/admin/reports/route.ts`,
+`components/admin/ReportsPanel.tsx`, `components/admin/ReviewsPanel.tsx`, `app/admin/page.tsx`
+
+The "No" button and Report Issue wrote negative confirmations to the database, and the admin portal
+had no view of them — so a room could be reported as gone indefinitely with nobody able to see it.
+`/api/admin/reviews` had the same defect: the endpoint existed with no UI reaching it.
+
+*Fixed:* the admin dashboard now has three tabs — New rooms, Reported issues, Reviews. Migration 010
+adds `resolved_at` and `resolution_note` to `confirmations`, so a handled report can be cleared
+without deleting it; a room repeatedly reported as gone stays visible as a pattern even after each
+report is closed. Resolving is reversible.
+
+Verified: a public report filed through `/api/confirm-venue` appears in the admin list, marking it
+resolved removes it from the open list while `includeResolved=true` still returns it.
+
 ### 4a. Reviews — **BUILT**
 
 `supabase/migrations/009_add_reviews.sql`, `app/api/reviews/route.ts`,

@@ -2,6 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { Check, X, Loader, Edit2, Save } from 'lucide-react';
+import { ReportsPanel } from '@/components/admin/ReportsPanel';
+import { ReviewsPanel } from '@/components/admin/ReviewsPanel';
+
+type AdminTab = 'submissions' | 'reports' | 'reviews';
 
 interface Submission {
   id: string;
@@ -27,6 +31,7 @@ export default function AdminPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   // Typed to match Submission['payload'] so edits can be written straight back
   // into the submissions list without widening its type.
+  const [tab, setTab] = useState<AdminTab>('submissions');
   const [editData, setEditData] = useState<Submission['payload']>({
     name: '',
     latitude: 0,
@@ -134,7 +139,9 @@ export default function AdminPage() {
         <div className="mb-8 flex items-start justify-between gap-4">
           <div>
             <h1 className="text-4xl font-bold text-gray-900">Admin Dashboard</h1>
-            <p className="text-gray-600 mt-2">Review and approve nursing room submissions</p>
+            <p className="text-gray-600 mt-2">
+              New rooms, reported problems, and reviews
+            </p>
           </div>
           <button
             onClick={handleLogout}
@@ -144,6 +151,32 @@ export default function AdminPage() {
           </button>
         </div>
 
+        {/* Tabs */}
+        <div className="flex gap-2 mb-6 border-b">
+          {([
+            ['submissions', '📋 New rooms'],
+            ['reports', '🚨 Reported issues'],
+            ['reviews', '⭐ Reviews'],
+          ] as [AdminTab, string][]).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setTab(key)}
+              className={`px-4 py-2 font-semibold transition border-b-2 -mb-px ${
+                tab === key
+                  ? 'border-blue-600 text-blue-700'
+                  : 'border-transparent text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {tab === 'reports' && <ReportsPanel />}
+        {tab === 'reviews' && <ReviewsPanel />}
+
+        {tab === 'submissions' && (
+        <>
         {/* Stats */}
         <div className="bg-white rounded-lg shadow p-6 mb-8">
           <p className="text-lg font-semibold text-gray-900">
@@ -387,6 +420,8 @@ export default function AdminPage() {
               </div>
             ))}
           </div>
+        )}
+        </>
         )}
       </div>
     </div>
