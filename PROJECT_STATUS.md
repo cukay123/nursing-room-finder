@@ -119,7 +119,7 @@ app/
   admin/login/page.tsx      Password form
   api/
     nearest-venues/         PostGIS RPC proxy + amenity filtering
-    postal-code-to-coords/  OneMap lookup, cached in postal_code_cache
+    location-search/        OneMap lookup by place name or postal code, cached
     reverse-geocode/        lat/lng → postal code (currently unused by any component)
     submit-venue/           Anonymous submission intake
     admin/submissions/      Pending queue (service role)
@@ -140,7 +140,8 @@ supabase/migrations/        7 SQL migrations
 
 ### Database
 
-Six tables: `venues`, `room_details`, `submissions`, `confirmations`, `photos`, `postal_code_cache`.
+Seven tables: `venues`, `room_details`, `submissions`, `confirmations`, `photos`, `reviews`,
+`location_cache`.
 
 The core query is the PostGIS function `nearest_venues(lat, lng, radius)` — `ST_DWithin` for the radius
 filter, `ST_Distance` for ordering, backed by a GiST index on `venues.location`. Migration 004 redefines
@@ -234,6 +235,28 @@ Migration 008 was needed first: `last_confirmed_at` was `max(created_at)` over *
 ignoring `still_there`. Once the buttons started writing rows, reporting a room as gone would have
 made the card announce "✅ Verified today" — the opposite of what the reporter said. It now counts
 only positive confirmations, and exposes `negative_reports` separately.
+
+### 3a. Search only accepted postal codes — **FIXED**
+
+`app/api/location-search/route.ts`, `components/LocationSearch.tsx`,
+`supabase/migrations/012_rename_postal_cache.sql`
+
+The search box was labelled "Search by postal code" and few people know the postal code of a mall.
+The endpoint had never actually been postal-code-only — it passed free text to OneMap's search API,
+which matches building names and streets just as well — but nothing in the UI said so, and the route,
+the query parameter and the cache table were all named after the assumption rather than the behaviour.
+
+*Fixed:* renamed the route to `/api/location-search` with a `q` parameter, relabelled the input
+("Search by place or postal code", placeholder "e.g. Bedok Mall, Orchard Road, or 238872"), and
+renamed `postal_code_cache` to `location_cache` in migration 012 — a misleading schema name is what
+made `seed_nursing_rooms.csv` so easy to misread.
+
+Also added retry with backoff. OneMap rate-limits readily, and without it a burst of searches returned
+"lookup failed" for places that exist perfectly well — the same trap that produced 47 false misses in
+the geocoding cross-check. Cache keys are lowercased so "bedok mall" and "Bedok Mall" share an entry.
+
+Verified in the browser: typing "Jem" moves the map to Jurong East and lists JEM (0m), Ng Teng Fong
+Hospital (381m) and Jurong East Bus Interchange (384m).
 
 ### 4-0. Reported problems had nowhere to go — **FIXED**
 
@@ -376,7 +399,7 @@ Docker-based deploy would have failed.
 
 *Fixed:* bumped to `node:22-alpine`.
 
-### 10. `postal_code_cache` was publicly writable — **FIXED**
+### 10. `postal_code_cache` (now `location_cache`) was publicly writable — **FIXED**
 
 `supabase/migrations/003`, now `006_lock_down_anon_writes.sql`
 

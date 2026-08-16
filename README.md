@@ -13,7 +13,7 @@ Find breastfeeding and nursing rooms near you in Singapore. A crowdsourced PWA (
 ## ✨ Features
 
 ### User Features
-- 📍 **Location Search** - Find nursing rooms near you by GPS or postal code
+- 📍 **Location Search** - Find nursing rooms near you by GPS, place name, or postal code
 - 🗺️ **Interactive Map** - View all rooms on a Leaflet + OpenStreetMap
 - 🧭 **GPS Tracking** - Real-time location following (mobile)
 - 📱 **Mobile Friendly** - Fully responsive PWA design
@@ -97,7 +97,7 @@ nursing-room-finder/
 │   └── api/                 # API endpoints
 │       ├── nearest-venues/
 │       ├── submit-venue/
-│       ├── postal-code-to-coords/
+│       ├── location-search/
 │       ├── reverse-geocode/
 │       └── admin/
 ├── components/              # React components
@@ -126,7 +126,7 @@ nursing-room-finder/
 - `submissions` - User submissions (pending/approved/rejected)
 - `confirmations` - Verification records
 - `photos` - User-uploaded images
-- `postal_code_cache` - OneMap API cache
+- `location_cache` - OneMap lookup cache (place names and postal codes)
 
 ### Features
 - ✅ PostGIS geospatial queries
@@ -185,7 +185,7 @@ npm run test
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
 | `/api/nearest-venues` | GET | Find rooms near coordinates |
-| `/api/postal-code-to-coords` | GET | Convert postal code to lat/lng |
+| `/api/location-search` | GET | Convert a place name or postal code to lat/lng |
 | `/api/reverse-geocode` | GET | Convert lat/lng to postal code |
 | `/api/submit-venue` | POST | Submit new nursing room |
 | `/api/admin/submissions` | GET | Get pending submissions |

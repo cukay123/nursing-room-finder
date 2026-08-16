@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Location search component: GPS + postal code input
+ * Location search component: GPS + place name or postal code input
  */
 
 import { useState } from 'react';
@@ -14,7 +14,7 @@ interface LocationSearchProps {
 }
 
 export function LocationSearch({ onLocationFound, isLoading, onSearchComplete }: LocationSearchProps) {
-  const [postalCode, setPostalCode] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [error, setError] = useState('');
   const [searching, setSearching] = useState(false);
 
@@ -55,14 +55,14 @@ export function LocationSearch({ onLocationFound, isLoading, onSearchComplete }:
         const errorCode = error?.code;
 
         if (errorCode === 1) { // PERMISSION_DENIED
-          setError('❌ Location permission denied. Use postal code search instead.');
+          setError('❌ Location permission denied. Search by place name instead.');
         } else if (errorCode === 3) { // TIMEOUT
-          setError('⏳ Location taking too long. Try postal code search.');
+          setError('⏳ Location taking too long. Try searching by place name.');
         } else if (errorCode === 2) { // POSITION_UNAVAILABLE
-          setError('📍 GPS unavailable (desktop?). Use postal code search.');
+          setError('📍 GPS unavailable (desktop?). Search by place name instead.');
         } else {
           // Generic error - likely HTTPS/secure context issue
-          setError('📍 Location unavailable. Make sure you\'re on HTTPS or use postal code search.');
+          setError('📍 Location unavailable. Make sure you\'re on HTTPS or search by place name.');
         }
 
         setSearching(false);
@@ -75,10 +75,10 @@ export function LocationSearch({ onLocationFound, isLoading, onSearchComplete }:
     );
   };
 
-  const handlePostalCodeSearch = async (e?: React.FormEvent | React.MouseEvent) => {
+  const handleSearch = async (e?: React.FormEvent | React.MouseEvent) => {
     if (e) e.preventDefault?.();
-    if (!postalCode.trim()) {
-      setError('Please enter a postal code');
+    if (!searchQuery.trim()) {
+      setError('Enter a place name or postal code');
       return;
     }
 
@@ -87,12 +87,12 @@ export function LocationSearch({ onLocationFound, isLoading, onSearchComplete }:
 
     try {
       const response = await fetch(
-        `/api/postal-code-to-coords?postal_code=${encodeURIComponent(postalCode.trim())}`
+        `/api/location-search?q=${encodeURIComponent(searchQuery.trim())}`
       );
 
       if (!response.ok) {
         const data = await response.json();
-        setError(data.error || 'Postal code not found');
+        setError(data.error || 'Could not find that place');
         setSearching(false);
         return;
       }
@@ -113,7 +113,7 @@ export function LocationSearch({ onLocationFound, isLoading, onSearchComplete }:
       onLocationFound(lat, lng);
 
       console.log('Clearing search field');
-      setPostalCode('');
+      setSearchQuery('');
       setError('');
 
       // Callback to switch to list view
@@ -156,9 +156,9 @@ export function LocationSearch({ onLocationFound, isLoading, onSearchComplete }:
         <div className="flex-1 h-px bg-gray-300"></div>
       </div>
 
-      {/* Search by Postal Code */}
+      {/* Search by place name or postal code */}
       <div className="text-sm text-black font-bold">
-        🔍 Search by postal code
+        🔍 Search by place or postal code
       </div>
 
       <div className="flex gap-2">
@@ -168,21 +168,21 @@ export function LocationSearch({ onLocationFound, isLoading, onSearchComplete }:
           </div>
           <input
             type="text"
-            placeholder="Enter postal code (e.g., 238872)"
-            value={postalCode}
-            onChange={e => setPostalCode(e.target.value)}
+            placeholder="e.g. Bedok Mall, Orchard Road, or 238872"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
             disabled={searching || isLoading}
             className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm text-black focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 placeholder:text-gray-600"
             onKeyPress={(e) => {
               if (e.key === 'Enter') {
-                handlePostalCodeSearch(e as any);
+                handleSearch(e as any);
               }
             }}
           />
         </div>
         <button
-          onClick={(e) => handlePostalCodeSearch(e as any)}
-          disabled={searching || isLoading || !postalCode.trim()}
+          onClick={(e) => handleSearch(e as any)}
+          disabled={searching || isLoading || !searchQuery.trim()}
           className="px-4 py-2 bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white font-bold rounded-lg transition whitespace-nowrap"
         >
           {searching ? '⏳ Searching...' : '🔍 Search'}

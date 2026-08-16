@@ -55,15 +55,21 @@ export async function GET(req: NextRequest) {
             process.env.SUPABASE_SERVICE_ROLE_KEY!
           );
 
-          await supabase
-            .from('postal_code_cache')
+          // Table renamed in migration 012: the cache always held free-text
+          // queries, not only postal codes. .select() dropped because reading
+          // the row back is unnecessary and needs a permission anon lacks.
+          const { error: cacheError } = await supabase
+            .from('location_cache')
             .upsert({
-              postal_code: postalCode,
+              query: postalCode.toLowerCase(),
               latitude,
               longitude,
               resolved_at: new Date().toISOString(),
-            })
-            .select();
+            });
+
+          if (cacheError) {
+            console.error('Location cache write failed:', cacheError);
+          }
         }
 
         return NextResponse.json({
