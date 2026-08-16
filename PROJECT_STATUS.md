@@ -247,10 +247,23 @@ had no view of them — so a room could be reported as gone indefinitely with no
 *Fixed:* the admin dashboard now has three tabs — New rooms, Reported issues, Reviews. Migration 010
 adds `resolved_at` and `resolution_note` to `confirmations`, so a handled report can be cleared
 without deleting it; a room repeatedly reported as gone stays visible as a pattern even after each
-report is closed. Resolving is reversible.
+report is closed.
 
-Verified: a public report filed through `/api/confirm-venue` appears in the admin list, marking it
-resolved removes it from the open list while `includeResolved=true` still returns it.
+Handling a report is a **decision, not an acknowledgement** (migration 011). Two outcomes:
+
+- **Keep on map** — checked, the room is fine and the report was mistaken. Closes the report.
+- **Remove from map** — the room is genuinely gone. Sets `venues.removed_at`, which `nearest_venues`
+  now filters on, and closes every open report against that room since they all concerned the same
+  thing. Requires a second click to confirm.
+
+Removal is a **soft delete**. A hard delete would cascade through `room_details`, `confirmations`,
+`photos` and `reviews` — destroying the very reports that justified the decision, and making a
+mistaken removal unrecoverable. Rooms also reopen after refurbishment, so "Put back on map" restores
+one in a click.
+
+Verified: a public report reaches the admin list; Remove drops the venue count from 85 to 84 on the
+public API; Restore returns it to 85; Keep closes the report with a recorded reason and leaves the map
+untouched; an unrecognised action is rejected with 400.
 
 ### 4a. Reviews — **BUILT**
 
