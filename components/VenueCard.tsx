@@ -4,7 +4,7 @@
  * Venue detail card shown in bottom sheet / detail view
  */
 
-import { VenueWithDetails } from '@/lib/supabase';
+import { Review, VenueWithDetails } from '@/lib/supabase';
 import {
   Lock,
   Baby,
@@ -20,7 +20,8 @@ import {
   Package,
   ShoppingBag,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { StarRating } from '@/components/StarRating';
 
 interface VenueCardProps {
   venue: VenueWithDetails;
@@ -34,6 +35,77 @@ export function VenueCard({ venue, onClose, userLat, userLng }: VenueCardProps) 
   const [feedback, setFeedback] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [showIssueBox, setShowIssueBox] = useState(false);
   const [issueNotes, setIssueNotes] = useState('');
+
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [showReviewForm, setShowReviewForm] = useState(false);
+  const [reviewRating, setReviewRating] = useState(0);
+  const [reviewComment, setReviewComment] = useState('');
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewError, setReviewError] = useState('');
+
+  const loadReviews = useCallback(async () => {
+    setReviewsLoading(true);
+    try {
+      const response = await fetch(`/api/reviews?venueId=${encodeURIComponent(venue.id)}`);
+      if (!response.ok) throw new Error('Could not load reviews');
+      const data = await response.json();
+      setReviews(data.reviews ?? []);
+    } catch {
+      setReviews([]);
+    } finally {
+      setReviewsLoading(false);
+    }
+  }, [venue.id]);
+
+  useEffect(() => {
+    // Reset per-venue state when the card switches to a different room, or the
+    // previous room's reviews and half-typed comment would linger.
+    setShowReviewForm(false);
+    setReviewRating(0);
+    setReviewComment('');
+    setReviewError('');
+    setFeedback(null);
+    setShowIssueBox(false);
+    setIssueNotes('');
+    loadReviews();
+  }, [venue.id, loadReviews]);
+
+  const submitReview = async () => {
+    if (reviewRating < 1) {
+      setReviewError('Please choose a star rating first');
+      return;
+    }
+
+    setReviewSubmitting(true);
+    setReviewError('');
+
+    try {
+      const response = await fetch('/api/reviews', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          venueId: venue.id,
+          rating: reviewRating,
+          comment: reviewComment,
+        }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'Could not save your review');
+      }
+
+      setShowReviewForm(false);
+      setReviewRating(0);
+      setReviewComment('');
+      await loadReviews();
+    } catch (err) {
+      setReviewError(err instanceof Error ? err.message : 'Could not save your review');
+    } finally {
+      setReviewSubmitting(false);
+    }
+  };
 
   const sendConfirmation = async (stillThere: boolean, notes?: string) => {
     setConfirmLoading(true);
@@ -329,6 +401,108 @@ export function VenueCard({ venue, onClose, userLat, userLng }: VenueCardProps) 
             </button>
           )}
         </div>
+      </div>
+
+      {/* Reviews */}
+      <div className="pt-4 border-t space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-bold text-gray-900">Reviews</p>
+          {!showReviewForm && (
+            <button
+              onClick={() => setShowReviewForm(true)}
+              className="text-sm text-purple-600 hover:text-purple-700 font-medium bg-purple-50 px-3 py-1.5 rounded-lg transition"
+            >
+              ⭐ Write Review
+            </button>
+          )}
+        </div>
+
+        {reviews.length > 0 && (
+          <div className="flex items-center gap-2">
+            <StarRating
+              value={reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length}
+            />
+            <span className="text-sm text-gray-600">
+              {(reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length).toFixed(1)} ·{' '}
+              {reviews.length} review{reviews.length === 1 ? '' : 's'}
+            </span>
+          </div>
+        )}
+
+        {showReviewForm && (
+          <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-700">Your rating:</span>
+              <StarRating
+                value={reviewRating}
+                onChange={setReviewRating}
+                disabled={reviewSubmitting}
+                size={22}
+              />
+            </div>
+
+            <textarea
+              value={reviewComment}
+              onChange={e => setReviewComment(e.target.value)}
+              maxLength={1000}
+              rows={3}
+              placeholder="How was it? Clean, quiet, easy to find? (optional)"
+              className="w-full border rounded-lg px-3 py-2 text-sm text-black focus:outline-none focus:ring-2 focus:ring-purple-500"
+            />
+
+            {reviewError && (
+              <p role="alert" className="text-sm text-red-600">
+                {reviewError}
+              </p>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={submitReview}
+                disabled={reviewSubmitting}
+                className="flex-1 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-400 text-white text-sm py-2 rounded-lg font-semibold transition"
+              >
+                {reviewSubmitting ? 'Posting...' : 'Post review'}
+              </button>
+              <button
+                onClick={() => {
+                  setShowReviewForm(false);
+                  setReviewError('');
+                }}
+                disabled={reviewSubmitting}
+                className="px-4 text-sm text-gray-600 hover:text-gray-800 py-2 font-medium bg-gray-100 rounded-lg transition"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {reviewsLoading ? (
+          <p className="text-sm text-gray-500">Loading reviews...</p>
+        ) : reviews.length === 0 ? (
+          <p className="text-sm text-gray-500">
+            No reviews yet — be the first to help other parents.
+          </p>
+        ) : (
+          <ul className="space-y-3">
+            {reviews.map(review => (
+              <li key={review.id} className="text-sm">
+                <div className="flex items-center gap-2">
+                  <StarRating value={review.rating} size={14} />
+                  <span className="text-xs text-gray-500">
+                    {new Date(review.created_at).toLocaleDateString()}
+                  </span>
+                </div>
+                {review.comment && (
+                  <p className="text-gray-700 mt-1 whitespace-pre-wrap break-words">
+                    {review.comment}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     </div>
   );

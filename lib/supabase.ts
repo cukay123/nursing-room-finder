@@ -30,7 +30,17 @@ export type VenueWithDetails = {
   can_buy_diaper?: boolean;
   distance_meters: number;
   last_confirmed_at?: string;
+  negative_reports?: number;
+  avg_rating?: number | null;
+  review_count?: number;
   source?: string;
+};
+
+export type Review = {
+  id: string;
+  rating: number;
+  comment: string | null;
+  created_at: string;
 };
 
 export type VenueDetail = {

@@ -228,13 +228,37 @@ The thumbs up/down buttons pointed at a `// TODO`, so the `confirmations` table 
   Rate-limited to 20 per 10 minutes.
 - Yes/No now post, with success and error feedback shown in the card.
 - "Report Issue" opens a note box and files a negative confirmation with the text.
-- **"Write Review" was removed.** There is no reviews table anywhere in the schema, so the button
-  could not be made to work without building a feature; leaving a dead control was the worse option.
+- **"Write Review" was briefly removed, then built properly** — see below.
 
 Migration 008 was needed first: `last_confirmed_at` was `max(created_at)` over *all* confirmations,
 ignoring `still_there`. Once the buttons started writing rows, reporting a room as gone would have
 made the card announce "✅ Verified today" — the opposite of what the reporter said. It now counts
 only positive confirmations, and exposes `negative_reports` separately.
+
+### 4a. Reviews — **BUILT**
+
+`supabase/migrations/009_add_reviews.sql`, `app/api/reviews/route.ts`,
+`app/api/admin/reviews/route.ts`, `components/StarRating.tsx`, `components/VenueCard.tsx`
+
+A `reviews` table with a 1–5 star rating and an optional comment, kept deliberately separate from
+`confirmations`: those answer "is this room still here", reviews answer "what was it like". Mixing
+them would let a one-star review suppress the freshness signal, or a confirmation inflate a rating.
+
+- **Writes go through `/api/reviews` on the service role.** Anon has no INSERT grant, so rating
+  bounds, comment length and rate limiting (3 per hour) are enforced server-side rather than trusted
+  from the browser.
+- **Reviews publish immediately**, because a moderation queue nobody empties makes a feature feel
+  dead. An admin can hide abuse afterwards via `PATCH /api/admin/reviews`, gated by `proxy.ts`.
+- **Hidden, not deleted.** The RLS policy exposes only `status = 'visible'`, so a hidden review
+  vanishes publicly but survives — a moderation mistake is reversible and a pattern of abuse stays
+  inspectable.
+- Migration 009 also adds `avg_rating` and `review_count` to `nearest_venues`, as scalar subqueries
+  rather than another join: joining reviews alongside confirmations would multiply rows and corrupt
+  both aggregates.
+
+Verified: post, list, invalid ratings (9 and 2.5) rejected with 400, unknown venue 404, rate limit
+429, admin list 401 when unauthenticated, and hide/unhide correctly removing and restoring the review
+from the public API.
 
 ### 4b. The map snapped back to the user's location — **FIXED**
 
