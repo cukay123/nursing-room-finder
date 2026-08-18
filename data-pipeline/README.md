@@ -87,3 +87,32 @@ Browser-download copies kept for safety: `geocode_onemap (1).py` is byte-identic
 `geocode_onemap.py`, and the two `seed_nursing_rooms (N).csv` files are identical to
 each other but differ from the curated seed. Safe to delete once you have confirmed
 the canonical set.
+
+## Coverage check against babyment.com
+
+`babyment_scan.py` walks babyment.com's 38 area pages and records every venue it
+lists. `babyment_prepare_submissions.py` takes the ones our map lacks, reads each
+detail page for floor level and amenities, geocodes the published address, and
+inserts them as **pending submissions** — not venues.
+
+That distinction is deliberate. Nobody has verified these rooms on the ground, so
+they go into the same review queue a parent's submission lands in, where each one
+is approved, merged into an existing room, or rejected by hand.
+
+```bash
+python babyment_scan.py                                    # -> babyment.json
+# diff against the live venue list, writing missing.json
+python babyment_prepare_submissions.py "$SUPABASE_URL" "$SUPABASE_SECRET_KEY"
+```
+
+Both scripts pace themselves (roughly a second between requests) against babyment
+and OneMap alike. The prepare step needs the dev server running, since it geocodes
+through `/api/location-search`.
+
+**Amenity mapping.** babyment reports "Other facilities" as free text plus explicit
+yes/no for water dispensers and electrical points. Only what it states is recorded:
+stroller access and dad-friendliness are never mentioned there, so they stay false
+rather than guessed.
+
+**Rights.** This roughly doubles the dataset from a third source. Settle attribution
+with babyment as well as BMSG and SassyMama before relying on it publicly.

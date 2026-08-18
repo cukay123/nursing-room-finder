@@ -67,9 +67,8 @@ export default function AdminPage() {
         throw new Error('Failed to fetch submissions');
       }
       const data = await response.json();
-      const pending: Submission[] = data.submissions || [];
-      setSubmissions(pending);
-      loadMatches(pending);
+      setSubmissions(data.submissions || []);
+      loadMatches();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error fetching submissions');
     } finally {
@@ -80,23 +79,20 @@ export default function AdminPage() {
   // A submission for a place already on the map is usually someone adding detail,
   // not a new room. Fetching candidates up front means the admin sees that before
   // clicking Approve and creating a duplicate.
-  const loadMatches = async (pending: Submission[]) => {
-    const entries = await Promise.all(
-      pending.map(async submission => {
-        try {
-          const response = await fetch(
-            `/api/admin/submission-matches?submissionId=${submission.id}`
-          );
-          if (!response.ok) return [submission.id, []] as const;
-          const data = await response.json();
-          return [submission.id, (data.matches ?? []) as VenueMatch[]] as const;
-        } catch {
-          return [submission.id, []] as const;
-        }
-      })
-    );
-
-    setMatches(Object.fromEntries(entries));
+  // One request for the whole queue. Previously this fired one per submission in
+  // parallel, each re-reading every venue — fine for four, a fifty-way burst once
+  // the queue filled up.
+  const loadMatches = async () => {
+    try {
+      const response = await fetch('/api/admin/submission-matches');
+      if (!response.ok) return;
+      const data = await response.json();
+      setMatches(data.matchesBySubmission ?? {});
+    } catch {
+      // Recommendations are an aid, not a gate — a failure here still leaves
+      // every submission approvable.
+      setMatches({});
+    }
   };
 
   const handleLogout = async () => {
