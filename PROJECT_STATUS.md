@@ -236,6 +236,51 @@ ignoring `still_there`. Once the buttons started writing rows, reporting a room 
 made the card announce "✅ Verified today" — the opposite of what the reporter said. It now counts
 only positive confirmations, and exposes `negative_reports` separately.
 
+### 2a. Approving a submission always created a new room — **FIXED**
+
+`app/api/admin/submission-matches/route.ts`, `app/api/admin/approve-submission/route.ts`,
+`app/admin/page.tsx`
+
+Most submissions for a place already on the map are someone adding detail, not reporting a new room.
+Approving one created a second pin metres from the original. The original schema anticipated this —
+`submissions.venue_id` is commented "null if proposing a new venue" — but nothing ever set or read it.
+
+*Fixed:* the admin dashboard now shows candidate existing rooms beside each submission, with
+**Merge into this** alongside **Add as new room**.
+
+Matching scores every room by name similarity (Dice coefficient over character bigrams, with mall
+words stripped) as well as proximity. Proximity alone is insufficient and an `ilike` prefilter does
+not rescue it: submissions carry the coordinates of wherever the phone was standing, and "Millenia
+walk" never `ilike`-matches "Millennia Walk". The full scan is trivial under a hundred rooms; past a
+few thousand it wants a trigram index.
+
+The merge is deliberately **additive**, because the two sides are not equally trustworthy:
+
+- **Amenities only ever turn on.** An unticked box in the public form means "did not tick", not
+  "verified absent" — every toggle starts off. Letting an untouched toggle clear a curated `true`
+  would quietly delete information nobody intended to contradict.
+- **Name, address and coordinates are never overwritten** by a submission.
+- **Floor level fills a blank, never replaces one**; a differing value goes to the notes, since a mall
+  can have rooms on two levels.
+- **Notes are appended.**
+
+Verified: merging a submission into Bedok Mall turned on sink and power, left `has_lock` and
+`stroller_friendly` untouched despite the submission not ticking them, appended the note, and left the
+venue count at 84 — no duplicate.
+
+### 2b. Submissions record the map's default coordinates — **OPEN, high**
+
+`components/AddVenueModal.tsx`, `app/page.tsx`
+
+The submit form posts the page's `userLat`/`userLng`, which stay at the Singapore-centre fallback
+(1.3521, 103.8198) until GPS resolves — or forever, if the user declines location. All four pending
+submissions carry exactly those coordinates, so approving any of them as a new room would drop a pin
+in the middle of the island.
+
+Merging sidesteps it (coordinates are not copied), but a genuinely new room still needs a real
+position. The fix is to geocode the typed building name through `/api/location-search` when precise
+GPS is unavailable, rather than silently accepting the default.
+
 ### 3a. Search only accepted postal codes — **FIXED**
 
 `app/api/location-search/route.ts`, `components/LocationSearch.tsx`,

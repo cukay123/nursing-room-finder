@@ -1,11 +1,20 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Check, X, Loader, Edit2, Save } from 'lucide-react';
+import { Check, X, Loader, Edit2, Save, Merge } from 'lucide-react';
 import { ReportsPanel } from '@/components/admin/ReportsPanel';
 import { ReviewsPanel } from '@/components/admin/ReviewsPanel';
 
 type AdminTab = 'submissions' | 'reports' | 'reviews';
+
+interface VenueMatch {
+  id: string;
+  name: string;
+  address: string | null;
+  floor_level: string | null;
+  distance_meters: number;
+  name_similarity: number;
+}
 
 interface Submission {
   id: string;
@@ -32,6 +41,8 @@ export default function AdminPage() {
   // Typed to match Submission['payload'] so edits can be written straight back
   // into the submissions list without widening its type.
   const [tab, setTab] = useState<AdminTab>('submissions');
+  // Possible existing rooms each submission might be about, keyed by submission id.
+  const [matches, setMatches] = useState<Record<string, VenueMatch[]>>({});
   const [editData, setEditData] = useState<Submission['payload']>({
     name: '',
     latitude: 0,
@@ -51,12 +62,36 @@ export default function AdminPage() {
         throw new Error('Failed to fetch submissions');
       }
       const data = await response.json();
-      setSubmissions(data.submissions || []);
+      const pending: Submission[] = data.submissions || [];
+      setSubmissions(pending);
+      loadMatches(pending);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error fetching submissions');
     } finally {
       setLoading(false);
     }
+  };
+
+  // A submission for a place already on the map is usually someone adding detail,
+  // not a new room. Fetching candidates up front means the admin sees that before
+  // clicking Approve and creating a duplicate.
+  const loadMatches = async (pending: Submission[]) => {
+    const entries = await Promise.all(
+      pending.map(async submission => {
+        try {
+          const response = await fetch(
+            `/api/admin/submission-matches?submissionId=${submission.id}`
+          );
+          if (!response.ok) return [submission.id, []] as const;
+          const data = await response.json();
+          return [submission.id, (data.matches ?? []) as VenueMatch[]] as const;
+        } catch {
+          return [submission.id, []] as const;
+        }
+      })
+    );
+
+    setMatches(Object.fromEntries(entries));
   };
 
   const handleLogout = async () => {
@@ -79,7 +114,7 @@ export default function AdminPage() {
     setEditingId(null);
   };
 
-  const handleApprove = async (submissionId: string) => {
+  const handleApprove = async (submissionId: string, targetVenueId?: string) => {
     setProcessingId(submissionId);
     try {
       const submission = submissions.find(s => s.id === submissionId);
@@ -92,6 +127,7 @@ export default function AdminPage() {
           submissionId,
           action: 'approve',
           payload: dataToApprove,
+          targetVenueId,
         }),
       });
 
@@ -394,6 +430,50 @@ export default function AdminPage() {
                   )}
                 </div>
 
+                {/* Possible existing rooms this submission may be about */}
+                {(matches[submission.id]?.length ?? 0) > 0 && (
+                  <div className="px-6 pb-4">
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                      <p className="text-sm font-semibold text-amber-900">
+                        This may already be on the map
+                      </p>
+                      <p className="text-xs text-amber-800 mt-0.5">
+                        Merging adds the new details to the existing room instead of
+                        creating a second pin. Amenities are only ever switched on, and
+                        the existing name, address and position are kept.
+                      </p>
+
+                      <div className="mt-3 space-y-2">
+                        {matches[submission.id].map(match => (
+                          <div
+                            key={match.id}
+                            className="flex items-center justify-between gap-3 bg-white rounded-lg border border-amber-200 px-3 py-2"
+                          >
+                            <div className="min-w-0">
+                              <p className="font-semibold text-gray-900 truncate">
+                                {match.name}
+                              </p>
+                              <p className="text-xs text-gray-500 truncate">
+                                {match.distance_meters}m away
+                                {match.floor_level ? ` · ${match.floor_level}` : ''}
+                                {match.name_similarity >= 0.6 ? ' · name matches' : ''}
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => handleApprove(submission.id, match.id)}
+                              disabled={processingId === submission.id}
+                              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 hover:bg-teal-700 disabled:bg-gray-400 text-white rounded-lg text-sm font-semibold transition"
+                            >
+                              <Merge size={15} />
+                              Merge into this
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Actions */}
                 <div className="bg-gray-50 px-6 py-4 flex gap-3 justify-end border-t">
                   <button
@@ -407,14 +487,18 @@ export default function AdminPage() {
                   <button
                     onClick={() => handleApprove(submission.id)}
                     disabled={processingId === submission.id}
-                    className="flex items-center gap-2 px-6 py-2 bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white rounded-lg font-medium transition"
+                    className="flex items-center gap-2 px-6 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white rounded-lg font-medium transition"
                   >
                     {processingId === submission.id ? (
                       <Loader size={18} className="animate-spin" />
                     ) : (
                       <Check size={18} />
                     )}
-                    {processingId === submission.id ? 'Processing...' : 'Approve'}
+                    {processingId === submission.id
+                      ? 'Processing...'
+                      : (matches[submission.id]?.length ?? 0) > 0
+                        ? 'Add as new room'
+                        : 'Approve'}
                   </button>
                 </div>
               </div>
