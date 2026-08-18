@@ -27,6 +27,7 @@ interface Submission {
     longitude: number;
     amenities?: Record<string, boolean>;
     notes?: string;
+    locationSource?: 'gps' | 'geocoded';
   };
   status: string;
   created_at: string;
@@ -430,6 +431,40 @@ export default function AdminPage() {
                   )}
                 </div>
 
+                {/* How this submission's position was obtained. Older ones predate
+                    the field and carry the map's default centre, which is not a
+                    usable position for a new room. */}
+                <div className="px-6 pb-3">
+                  {(() => {
+                    const p = submission.payload;
+                    const atDefault =
+                      p.latitude === 1.3521 && p.longitude === 103.8198;
+
+                    if (atDefault) {
+                      return (
+                        <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                          <strong>No usable position.</strong> This was submitted before
+                          location was recorded properly, so it carries the map&rsquo;s
+                          default centre. Safe to merge into an existing room; do not add
+                          it as a new one without fixing the coordinates.
+                        </p>
+                      );
+                    }
+
+                    return (
+                      <p className="text-sm text-gray-600">
+                        Position:{' '}
+                        {p.locationSource === 'gps'
+                          ? 'from the submitter\u2019s GPS'
+                          : p.locationSource === 'geocoded'
+                            ? 'looked up from the building name'
+                            : 'unknown'}{' '}
+                        ({p.latitude?.toFixed?.(5)}, {p.longitude?.toFixed?.(5)})
+                      </p>
+                    );
+                  })()}
+                </div>
+
                 {/* Possible existing rooms this submission may be about */}
                 {(matches[submission.id]?.length ?? 0) > 0 && (
                   <div className="px-6 pb-4">
@@ -444,19 +479,37 @@ export default function AdminPage() {
                       </p>
 
                       <div className="mt-3 space-y-2">
-                        {matches[submission.id].map(match => (
+                        {matches[submission.id].map(match => {
+                          // Proximity alone surfaces neighbours: PLQ sits 238m from
+                          // SingPost Centre. Merging into the wrong one corrupts a good
+                          // record, so say plainly which signal produced the candidate.
+                          const likelySame = match.name_similarity >= 0.6;
+
+                          return (
                           <div
                             key={match.id}
                             className="flex items-center justify-between gap-3 bg-white rounded-lg border border-amber-200 px-3 py-2"
                           >
                             <div className="min-w-0">
-                              <p className="font-semibold text-gray-900 truncate">
-                                {match.name}
-                              </p>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="font-semibold text-gray-900 truncate">
+                                  {match.name}
+                                </p>
+                                <span
+                                  className={`text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ${
+                                    likelySame
+                                      ? 'bg-teal-50 text-teal-700'
+                                      : 'bg-gray-100 text-gray-600'
+                                  }`}
+                                >
+                                  {likelySame ? 'Name matches' : 'Nearby — check the name'}
+                                </span>
+                              </div>
                               <p className="text-xs text-gray-500 truncate">
-                                {match.distance_meters}m away
+                                {match.distance_meters === null
+                                  ? 'distance unknown'
+                                  : `${match.distance_meters}m away`}
                                 {match.floor_level ? ` · ${match.floor_level}` : ''}
-                                {match.name_similarity >= 0.6 ? ' · name matches' : ''}
                               </p>
                             </div>
                             <button
@@ -468,7 +521,8 @@ export default function AdminPage() {
                               Merge into this
                             </button>
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   </div>

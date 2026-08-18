@@ -520,6 +520,10 @@ export default function Home() {
         onClose={() => setShowAddVenueModal(false)}
         userLat={userLat}
         userLng={userLng}
+        // lastPositionRef is only ever set from a real GPS fix or an explicit
+        // search, so a null here means userLat/userLng are still the
+        // Singapore-centre default — not a position worth recording as a room's.
+        hasPreciseLocation={lastPositionRef.current !== null}
       />
     </div>
   );

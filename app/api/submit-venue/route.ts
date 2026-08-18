@@ -45,7 +45,25 @@ export async function POST(req: NextRequest) {
       hasDiaperMat,
       canBuyDiaper,
       notes,
+      locationSource,
     } = body;
+
+    // The map's fallback centre. Submissions used to arrive carrying it whenever
+    // GPS had not resolved, which pinned rooms to the middle of the island. The
+    // client now geocodes the building name instead; this rejects anything still
+    // sending the default, so a stale client fails loudly rather than silently.
+    const DEFAULT_LAT = 1.3521;
+    const DEFAULT_LNG = 103.8198;
+
+    if (latitude === DEFAULT_LAT && longitude === DEFAULT_LNG) {
+      return NextResponse.json(
+        {
+          error:
+            'Could not determine where this room is. Turn on location and submit while you are there, or use the full building name.',
+        },
+        { status: 400 }
+      );
+    }
 
     if (!name || !latitude || !longitude) {
       const missing = [];
@@ -91,6 +109,10 @@ export async function POST(req: NextRequest) {
           },
           notes,
           source: 'USER_SUBMITTED',
+          // 'gps' means the submitter was standing there; 'geocoded' means the
+          // position came from looking up the name they typed. Worth surfacing
+          // to whoever reviews it.
+          locationSource: locationSource === 'gps' ? 'gps' : 'geocoded',
         },
       });
 

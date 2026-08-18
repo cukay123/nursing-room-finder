@@ -268,7 +268,7 @@ Verified: merging a submission into Bedok Mall turned on sink and power, left `h
 `stroller_friendly` untouched despite the submission not ticking them, appended the note, and left the
 venue count at 84 — no duplicate.
 
-### 2b. Submissions record the map's default coordinates — **OPEN, high**
+### 2b. Submissions recorded the map's default coordinates — **FIXED**
 
 `components/AddVenueModal.tsx`, `app/page.tsx`
 
@@ -277,9 +277,22 @@ The submit form posts the page's `userLat`/`userLng`, which stay at the Singapor
 submissions carry exactly those coordinates, so approving any of them as a new room would drop a pin
 in the middle of the island.
 
-Merging sidesteps it (coordinates are not copied), but a genuinely new room still needs a real
-position. The fix is to geocode the typed building name through `/api/location-search` when precise
-GPS is unavailable, rather than silently accepting the default.
+*Fixed:* the page now tells the modal whether the position is a real fix (`lastPositionRef` is only
+set from GPS or an explicit search). With one, the submitter is standing at the room and that wins.
+Without one, the typed building name is geocoded through `/api/location-search`, and a submission that
+cannot be located is refused with an explanation rather than silently accepting the default. The
+submit route rejects the default coordinates outright, so a stale client fails loudly.
+
+Each submission now records `locationSource` (`gps` or `geocoded`), shown in the admin portal so a
+reviewer can judge the position before approving. Submissions predating the field are flagged red as
+having no usable position.
+
+The four pending submissions were backfilled by geocoding their names — all four had been sitting at
+1.3521, 103.8198. With real positions, proximity matching works alongside name matching.
+
+One caveat the UI now states explicitly: proximity surfaces *neighbours*, not just the same place —
+"Plq" lands 238m from SingPost Centre. Candidates are therefore labelled either "Name matches" or
+"Nearby — check the name", so a reviewer does not merge into the wrong building.
 
 ### 3a. Search only accepted postal codes — **FIXED**
 

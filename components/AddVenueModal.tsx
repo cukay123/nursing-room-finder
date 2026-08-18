@@ -20,6 +20,8 @@ interface AddVenueModalProps {
   onClose: () => void;
   userLat: number;
   userLng: number;
+  /** False while userLat/userLng are still the Singapore-centre default. */
+  hasPreciseLocation?: boolean;
 }
 
 /**
@@ -52,11 +54,50 @@ const EMPTY_FORM = {
   notes: '',
 };
 
-export function AddVenueModal({ isOpen, onClose, userLat, userLng }: AddVenueModalProps) {
+export function AddVenueModal({
+  isOpen,
+  onClose,
+  userLat,
+  userLng,
+  hasPreciseLocation = false,
+}: AddVenueModalProps) {
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  const [resolvedAddress, setResolvedAddress] = useState<string | null>(null);
+
+  /**
+   * Where the room actually is.
+   *
+   * With a real GPS fix, the submitter is standing at the room and that is the
+   * best position available. Without one, userLat/userLng are still the map's
+   * Singapore-centre default — submitting that silently pinned rooms to the
+   * middle of the island. So look the typed name up instead, and refuse to
+   * submit if it cannot be found rather than guessing.
+   */
+  const resolveLocation = async (name: string) => {
+    if (hasPreciseLocation) {
+      return { latitude: userLat, longitude: userLng, source: 'gps' as const };
+    }
+
+    const response = await fetch(`/api/location-search?q=${encodeURIComponent(name)}`);
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        data.error ||
+          `We could not find "${name}". Try the full building name, or turn on location and submit while you are there.`
+      );
+    }
+
+    return {
+      latitude: Number(data.latitude),
+      longitude: Number(data.longitude),
+      source: 'geocoded' as const,
+      matchedAddress: data.matchedAddress as string | null,
+    };
+  };
 
   const toggleAmenity = (key: string) => {
     setFormData(prev => ({ ...prev, [key]: !prev[key as keyof typeof prev] }));
@@ -68,13 +109,16 @@ export function AddVenueModal({ isOpen, onClose, userLat, userLng }: AddVenueMod
     setError('');
 
     try {
+      const location = await resolveLocation(formData.name.trim());
+
       const response = await fetch('/api/submit-venue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...formData,
-          latitude: userLat,
-          longitude: userLng,
+          latitude: location.latitude,
+          longitude: location.longitude,
+          locationSource: location.source,
         }),
       });
 
@@ -84,12 +128,16 @@ export function AddVenueModal({ isOpen, onClose, userLat, userLng }: AddVenueMod
       }
 
       setSuccess(true);
+      setResolvedAddress(
+        'matchedAddress' in location ? location.matchedAddress ?? null : null
+      );
       setFormData(EMPTY_FORM);
 
       setTimeout(() => {
         onClose();
         setSuccess(false);
-      }, 2000);
+        setResolvedAddress(null);
+      }, 3000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error submitting venue');
     } finally {
@@ -130,15 +178,30 @@ export function AddVenueModal({ isOpen, onClose, userLat, userLng }: AddVenueMod
             <p className="text-sm text-slate-500 mt-1">
               Your room has been sent for review.
             </p>
+            {resolvedAddress && (
+              <p className="text-xs text-slate-500 mt-3">
+                Recorded at <span className="font-medium">{resolvedAddress}</span>
+              </p>
+            )}
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto scroll-hide p-5 space-y-5">
-            {/* Location notice */}
+            {/* Location notice. Says which of the two positions will actually be
+                recorded, rather than always promising GPS. */}
             <div className="flex gap-2.5 bg-amber-50 ring-1 ring-amber-200 rounded-xl p-3">
               <AlertCircle size={17} className="text-amber-700 shrink-0 mt-0.5" />
               <p className="text-sm text-amber-800">
-                We will use <strong>your current location</strong> as the room&rsquo;s position,
-                so please submit while you are there.
+                {hasPreciseLocation ? (
+                  <>
+                    We will use <strong>your current location</strong> as the room&rsquo;s
+                    position, so please submit while you are there.
+                  </>
+                ) : (
+                  <>
+                    Location is off, so we will look up the position from the{' '}
+                    <strong>building name</strong> you type. Please give the full name.
+                  </>
+                )}
               </p>
             </div>
 
