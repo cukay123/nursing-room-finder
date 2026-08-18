@@ -116,3 +116,32 @@ rather than guessed.
 
 **Rights.** This roughly doubles the dataset from a third source. Settle attribution
 with babyment as well as BMSG and SassyMama before relying on it publicly.
+
+## Backups
+
+`backup_supabase.py` dumps every table to CSV in `backup/`, for committing.
+
+Everything the app knows lives in one hosted Supabase project, and the free tier
+has no point-in-time recovery — a mistaken DELETE or a bad merge has no undo.
+These CSVs are the undo.
+
+```bash
+cd data-pipeline && python backup_supabase.py     # reads ../.env.local
+git add backup && git commit -m "Back up database"
+```
+
+Filenames are fixed rather than timestamped, so `git diff` shows what actually
+changed between runs. Worth re-running before anything that edits data in bulk,
+and after clearing a submission queue.
+
+Two details that matter for restoring:
+
+- **Venue positions round-trip.** PostgREST returns PostGIS geography as WKB hex;
+  the `location` column is kept verbatim so it restores exactly, and decoded
+  `latitude`/`longitude` columns are added so the file can be read by a human.
+- **Removed rooms are included.** They are absent from the live map but still in
+  the table, and a backup that dropped them would quietly lose the record of what
+  was taken down and why.
+
+Restoring is a paste job, not a script: the CSVs go back through the Supabase
+dashboard's table import, or `psql \copy` against the connection string.
