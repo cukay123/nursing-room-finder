@@ -1,82 +1,73 @@
 'use client';
 
 /**
- * Location search component: GPS + place name or postal code input
+ * Location search: GPS, or a place name / postal code.
  */
 
 import { useState } from 'react';
-import { MapPin, Search } from 'lucide-react';
+import { Loader2, Navigation, Search } from 'lucide-react';
 
 interface LocationSearchProps {
   onLocationFound: (lat: number, lng: number) => void;
   onSearchComplete?: () => void;
   isLoading?: boolean;
+  venueCount?: number;
 }
 
-export function LocationSearch({ onLocationFound, isLoading, onSearchComplete }: LocationSearchProps) {
+export function LocationSearch({
+  onLocationFound,
+  isLoading,
+  onSearchComplete,
+  venueCount,
+}: LocationSearchProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [error, setError] = useState('');
   const [searching, setSearching] = useState(false);
+  const [locating, setLocating] = useState(false);
 
-  const handleUseLocation = async () => {
-    setSearching(true);
+  const handleUseLocation = () => {
+    setLocating(true);
     setError('');
 
     if (!navigator.geolocation) {
-      setError('Geolocation not supported');
-      setSearching(false);
+      setError('This browser cannot share your location. Try searching instead.');
+      setLocating(false);
       return;
     }
 
     navigator.geolocation.getCurrentPosition(
       position => {
         const { latitude, longitude } = position.coords;
-        console.log('Got location:', latitude, longitude);
         onLocationFound(latitude, longitude);
         setError('');
-        setSearching(false);
-
-        // Show nearby results (like postal code search)
-        setTimeout(() => {
-          if (onSearchComplete) {
-            onSearchComplete();
-          }
-        }, 200);
+        setLocating(false);
+        setTimeout(() => onSearchComplete?.(), 200);
       },
-      error => {
-        console.error('Geolocation error details:', {
-          code: error?.code,
-          message: error?.message,
-          toString: error?.toString?.(),
-          rawError: error
-        });
+      geoError => {
+        // Codes are the W3C constants: 1 denied, 2 unavailable, 3 timeout.
+        const messages: Record<number, string> = {
+          1: 'Location access was blocked. Search by place name instead.',
+          2: 'Your location is unavailable. Search by place name instead.',
+          3: 'Finding your location took too long. Try searching instead.',
+        };
 
-        // Handle different error codes
-        const errorCode = error?.code;
-
-        if (errorCode === 1) { // PERMISSION_DENIED
-          setError('❌ Location permission denied. Search by place name instead.');
-        } else if (errorCode === 3) { // TIMEOUT
-          setError('⏳ Location taking too long. Try searching by place name.');
-        } else if (errorCode === 2) { // POSITION_UNAVAILABLE
-          setError('📍 GPS unavailable (desktop?). Search by place name instead.');
-        } else {
-          // Generic error - likely HTTPS/secure context issue
-          setError('📍 Location unavailable. Make sure you\'re on HTTPS or search by place name.');
-        }
-
-        setSearching(false);
+        setError(
+          messages[geoError?.code] ??
+            'Could not get your location. Search by place name instead.'
+        );
+        setLocating(false);
       },
       {
-        enableHighAccuracy: true, // Use WiFi triangulation on desktop
-        timeout: 60000, // 60 seconds for WiFi to work
-        maximumAge: 0, // Don't use cache - get fresh location
+        enableHighAccuracy: true,
+        timeout: 60000,
+        maximumAge: 0,
       }
     );
   };
 
-  const handleSearch = async (e?: React.FormEvent | React.MouseEvent) => {
-    if (e) e.preventDefault?.();
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+
     if (!searchQuery.trim()) {
       setError('Enter a place name or postal code');
       return;
@@ -90,110 +81,95 @@ export function LocationSearch({ onLocationFound, isLoading, onSearchComplete }:
         `/api/location-search?q=${encodeURIComponent(searchQuery.trim())}`
       );
 
+      const data = await response.json();
+
       if (!response.ok) {
-        const data = await response.json();
         setError(data.error || 'Could not find that place');
-        setSearching(false);
         return;
       }
-
-      const data = await response.json();
-      console.log('API response:', data);
 
       const lat = Number(data.latitude);
       const lng = Number(data.longitude);
 
-      console.log('Parsed coordinates:', lat, lng);
-
-      if (isNaN(lat) || isNaN(lng)) {
-        throw new Error('Invalid coordinates');
+      if (Number.isNaN(lat) || Number.isNaN(lng)) {
+        setError('That search returned an unusable location. Try another name.');
+        return;
       }
 
-      console.log('Calling onLocationFound');
       onLocationFound(lat, lng);
-
-      console.log('Clearing search field');
       setSearchQuery('');
       setError('');
-
-      // Callback to switch to list view
-      console.log('Calling onSearchComplete');
-      try {
-        if (onSearchComplete) {
-          onSearchComplete();
-        }
-      } catch (callbackErr) {
-        console.error('Callback error:', callbackErr);
-      }
-
-      setSearching(false);
-    } catch (err) {
-      console.error('Search error:', err);
-      setError(`Error: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      onSearchComplete?.();
+    } catch {
+      setError('Something went wrong. Please try again.');
+    } finally {
       setSearching(false);
     }
   };
 
-  return (
-    <div className="bg-white rounded-lg shadow-md p-4 space-y-3">
-      <div className="text-sm text-black font-bold">
-        📍 Find Nursing Rooms Near You
-      </div>
+  const busy = searching || locating || isLoading;
 
-      {/* Use My Location Button */}
+  return (
+    <div className="bg-white rounded-2xl shadow-lg ring-1 ring-slate-200/80 p-4 space-y-3">
+      <h2 className="font-display text-base font-bold text-slate-900">
+        Find a nursing room
+      </h2>
+
       <button
         onClick={handleUseLocation}
-        disabled={searching || isLoading}
-        className="w-full flex items-center justify-center gap-2 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white py-3 rounded-lg font-bold transition"
+        disabled={busy}
+        className="w-full flex items-center justify-center gap-2 bg-teal-600 hover:bg-teal-700 disabled:bg-slate-300 disabled:text-slate-500 text-white py-3 rounded-xl font-semibold transition"
       >
-        📍 {searching ? 'Getting your location...' : 'Use My Current Location'}
+        {locating ? (
+          <Loader2 size={18} className="animate-spin" />
+        ) : (
+          <Navigation size={18} />
+        )}
+        {locating ? 'Finding you…' : 'Use my current location'}
       </button>
 
-      {/* OR Divider */}
       <div className="flex items-center gap-3">
-        <div className="flex-1 h-px bg-gray-300"></div>
-        <span className="text-xs text-gray-600 font-semibold">OR</span>
-        <div className="flex-1 h-px bg-gray-300"></div>
+        <div className="flex-1 h-px bg-slate-200" />
+        <span className="text-xs text-slate-500 font-medium">or</span>
+        <div className="flex-1 h-px bg-slate-200" />
       </div>
 
-      {/* Search by place name or postal code */}
-      <div className="text-sm text-black font-bold">
-        🔍 Search by place or postal code
-      </div>
-
-      <div className="flex gap-2">
+      <form onSubmit={handleSearch} className="flex gap-2">
         <div className="relative flex-1">
-          <div className="absolute inset-y-0 left-0 flex items-center pl-3">
-            <Search size={16} className="text-gray-400" />
-          </div>
+          <Search
+            size={16}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
+          />
           <input
             type="text"
-            placeholder="e.g. Bedok Mall, Orchard Road, or 238872"
+            placeholder="Bedok Mall, Orchard Road, or 238872"
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            disabled={searching || isLoading}
-            className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm text-black focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 placeholder:text-gray-600"
-            onKeyPress={(e) => {
-              if (e.key === 'Enter') {
-                handleSearch(e as any);
-              }
-            }}
+            disabled={busy}
+            aria-label="Search by place name or postal code"
+            className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent disabled:opacity-60 placeholder:text-slate-400"
           />
         </div>
         <button
-          onClick={(e) => handleSearch(e as any)}
-          disabled={searching || isLoading || !searchQuery.trim()}
-          className="px-4 py-2 bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white font-bold rounded-lg transition whitespace-nowrap"
+          type="submit"
+          disabled={busy || !searchQuery.trim()}
+          className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400 text-white text-sm font-semibold rounded-xl transition whitespace-nowrap"
         >
-          {searching ? '⏳ Searching...' : '🔍 Search'}
+          {searching ? <Loader2 size={16} className="animate-spin" /> : 'Search'}
         </button>
-      </div>
+      </form>
 
-      {error && <p className="text-red-500 text-sm">{error}</p>}
+      {error && (
+        <p role="alert" className="text-sm text-red-600">
+          {error}
+        </p>
+      )}
 
-      <div className="text-xs text-gray-500">
-        💡 All 85 nursing rooms visible on map by default
-      </div>
+      {typeof venueCount === 'number' && venueCount > 0 && (
+        <p className="text-xs text-slate-500">
+          Showing all {venueCount} rooms across Singapore
+        </p>
+      )}
     </div>
   );
 }

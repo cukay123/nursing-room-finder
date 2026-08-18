@@ -3,24 +3,83 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+
+  /* Teal scale. 600 is the primary action colour; 700 is its hover state.
+     50/100 are surface tints for chips and panels, 200 for their borders. */
+  --teal-50: #f0fdfa;
+  --teal-100: #ccfbf1;
+  --teal-200: #99f6e4;
+  --teal-300: #5eead4;
+  --teal-400: #2dd4bf;
+  --teal-500: #14b8a6;
+  --teal-600: #0d9488;
+  --teal-700: #0f766e;
+  --teal-800: #115e59;
+  --teal-900: #134e4a;
+
+  /* Community-submitted rooms, and the map pins that mark them. Deliberately a
+     soft red rather than a hard alert red — an unverified room is a lead worth
+     following, not an error. */
+  --coral-400: #f87171;
+  --amber-50: #fffbeb;
+  --amber-200: #fde68a;
+  --amber-700: #b45309;
+
+  --surface: #f8fafc;
+  --border: #e2e8f0;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-sans: var(--font-dm-sans);
+  --font-display: var(--font-nunito);
+
+  --color-teal-50: var(--teal-50);
+  --color-teal-100: var(--teal-100);
+  --color-teal-200: var(--teal-200);
+  --color-teal-300: var(--teal-300);
+  --color-teal-400: var(--teal-400);
+  --color-teal-500: var(--teal-500);
+  --color-teal-600: var(--teal-600);
+  --color-teal-700: var(--teal-700);
+  --color-teal-800: var(--teal-800);
+  --color-teal-900: var(--teal-900);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-dm-sans), system-ui, -apple-system, sans-serif;
+}
+
+/* The app commits to a light palette: every surface, map tile and chip is drawn
+   for it. A prefers-color-scheme override used to flip only the body background,
+   which left dark ground behind white cards rather than a dark theme. */
+
+.font-display {
+  font-family: var(--font-nunito), system-ui, sans-serif;
+}
+
+/* Horizontal filter strip scrolls by swipe; the scrollbar would sit across the
+   pills on desktop. */
+.scroll-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.scroll-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Leaflet ships z-index values in the 400-1000 range, which float map panes and
+   controls above the app's own overlays. Pin them below everything else so the
+   venue card, filter strip and modals stack predictably. */
+.leaflet-pane {
+  z-index: 1 !important;
+}
+
+.leaflet-control-container {
+  z-index: 2 !important;
 }

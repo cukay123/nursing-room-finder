@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Home page: Map view with location search and venue listings
+ * Home page: map and list views over the nursing room dataset.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -10,12 +10,26 @@ import { LocationSearch } from '@/components/LocationSearch';
 import { VenueCard } from '@/components/VenueCard';
 import { AddVenueModal } from '@/components/AddVenueModal';
 import { VenueWithDetails } from '@/lib/supabase';
-import { List, Map as MapIcon, Plus, X } from 'lucide-react';
+import {
+  Baby,
+  ChevronRight,
+  Droplets,
+  List,
+  Lock,
+  Luggage,
+  Map as MapIcon,
+  Package,
+  Plus,
+  ShoppingBag,
+  SlidersHorizontal,
+  X,
+  Zap,
+} from 'lucide-react';
 
 // Dynamic import to avoid server-side Leaflet issues
 const Map = dynamic(() => import('@/components/Map').then(mod => ({ default: mod.Map })), {
   ssr: false,
-  loading: () => <div className="absolute inset-0 bg-gray-200 animate-pulse" />,
+  loading: () => <div className="absolute inset-0 bg-slate-200 animate-pulse" />,
 });
 
 const DEFAULT_LAT = 1.3521; // Singapore center
@@ -24,6 +38,28 @@ const DEFAULT_LNG = 103.8198;
 // Ignore GPS updates smaller than this. Consumer GPS jitters by tens of metres
 // while standing still, and every accepted update refetches the venue list.
 const MIN_MOVE_METRES = 100;
+
+/**
+ * Filter definitions. The label is what a parent reads; the key is the database
+ * column. Rendering the raw key ("has_power_outlet") was leaking schema naming
+ * into the interface.
+ *
+ * dad_friendly is absent on purpose: no venue in the dataset carries the
+ * information, so the filter could only ever return an empty map.
+ */
+const FILTERS = [
+  { key: 'has_lock', label: 'Lockable', icon: Lock },
+  { key: 'has_changing_table', label: 'Changing table', icon: Baby },
+  { key: 'has_sink', label: 'Sink', icon: Droplets },
+  { key: 'has_power_outlet', label: 'Power outlet', icon: Zap },
+  { key: 'stroller_friendly', label: 'Stroller friendly', icon: Luggage },
+  { key: 'has_diaper_mat', label: 'Diaper mat', icon: Package },
+  { key: 'can_buy_diaper', label: 'Buy diapers', icon: ShoppingBag },
+] as const;
+
+const INITIAL_FILTERS: Record<string, boolean> = Object.fromEntries(
+  FILTERS.map(f => [f.key, false])
+);
 
 function distanceMetres(lat1: number, lng1: number, lat2: number, lng2: number) {
   const radius = 6371000;
@@ -36,10 +72,20 @@ function distanceMetres(lat1: number, lng1: number, lat2: number, lng2: number) 
   return 2 * radius * Math.asin(Math.sqrt(a));
 }
 
+function formatDistance(metres: number) {
+  return metres < 1000
+    ? `${Math.round(metres)}m`
+    : `${(metres / 1000).toFixed(1)}km`;
+}
+
+function isVerified(venue: VenueWithDetails) {
+  return !venue.source || venue.source !== 'USER_SUBMITTED';
+}
+
 export default function Home() {
   const [userLat, setUserLat] = useState(DEFAULT_LAT);
   const [userLng, setUserLng] = useState(DEFAULT_LNG);
-  // Bumped only by an explicit user action (location button, postal code search).
+  // Bumped only by an explicit user action (location button, place search).
   // The map watches this, not the coordinates, so background GPS never moves the view.
   const [recenterAt, setRecenterAt] = useState(0);
   const lastPositionRef = useRef<{ lat: number; lng: number } | null>(null);
@@ -48,20 +94,12 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
   const [searchRadius, setSearchRadius] = useState(50000); // 50km to show all venues
-  const [hasSearched, setHasSearched] = useState(true); // Start as searched to show results
-  const [showSearchResults, setShowSearchResults] = useState(false); // Show search results panel
-  const [showAddVenueModal, setShowAddVenueModal] = useState(false); // Show add venue modal
-  const [filters, setFilters] = useState<Record<string, boolean>>({
-    has_lock: false,
-    has_changing_table: false,
-    has_sink: false,
-    has_power_outlet: false,
-    stroller_friendly: false,
-    // dad_friendly deliberately omitted: no venue in the dataset carries the
-    // information, so the filter could only ever return an empty map.
-    has_diaper_mat: false,
-    can_buy_diaper: false,
-  });
+  const [showSearchResults, setShowSearchResults] = useState(false);
+  const [showAddVenueModal, setShowAddVenueModal] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+  const [filters, setFilters] = useState<Record<string, boolean>>(INITIAL_FILTERS);
+
+  const activeFilterCount = Object.values(filters).filter(Boolean).length;
 
   // Fetch nearest venues when location, radius, or active filters change
   useEffect(() => {
@@ -74,9 +112,6 @@ export default function Home() {
   // the view back, so panning to look at another neighbourhood was impossible.
   // The map recentres only on an explicit request (see recenterAt), while the
   // blue "you are here" marker keeps following along.
-  //
-  // Small movements are also ignored, so standing still with a jittery GPS does
-  // not refetch the venue list every few seconds.
   useEffect(() => {
     if (!navigator.geolocation) {
       console.warn('Geolocation not available in this browser/context');
@@ -100,14 +135,13 @@ export default function Home() {
         console.warn('Location watch error:', {
           code: error?.code,
           message: error?.message,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
-        // Don't show repeated errors - just continue with default location
       },
       {
         enableHighAccuracy: true,
         timeout: 30000,
-        maximumAge: 5000, // Update every 5 seconds max
+        maximumAge: 5000,
       }
     );
 
@@ -116,9 +150,7 @@ export default function Home() {
 
   const fetchNearestVenues = async () => {
     setLoading(true);
-    setHasSearched(true);
     try {
-      // Build filter query string
       const activeFilters = Object.entries(filters)
         .filter(([, active]) => active)
         .map(([key]) => key)
@@ -149,45 +181,108 @@ export default function Home() {
   };
 
   const handleFilterChange = (key: string) => {
-    setFilters(prev => ({
-      ...prev,
-      [key]: !prev[key],
-    }));
+    setFilters(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const handleLocationFound = (lat: number, lng: number) => {
+    setUserLat(lat);
+    setUserLng(lng);
+    lastPositionRef.current = { lat, lng };
+    // Explicit request, so this one does move the map.
+    setRecenterAt(Date.now());
   };
 
   return (
-    <div className="h-screen flex flex-col bg-gray-100">
+    <div className="h-screen flex flex-col bg-slate-50">
       {/* Header */}
-      <header className="bg-white shadow-sm border-b z-10">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              🏥 Nursing Room Finder
-            </h1>
-            <p className="text-sm text-gray-600">Find breastfeeding rooms near you</p>
+      <header className="bg-white border-b border-slate-200 z-20">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-teal-600 flex items-center justify-center shrink-0">
+              <Baby size={22} className="text-white" />
+            </div>
+            <div className="min-w-0">
+              <h1 className="font-display text-lg font-extrabold text-slate-900 leading-tight truncate">
+                Nursing Room Finder
+              </h1>
+              <p className="text-xs text-slate-500">
+                {loading ? 'Finding rooms…' : `${venues.length} rooms in Singapore`}
+              </p>
+            </div>
           </div>
-          <div className="flex gap-2">
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              onClick={() => setShowFilters(v => !v)}
+              aria-expanded={showFilters}
+              className={`relative p-2.5 rounded-xl transition ${
+                showFilters || activeFilterCount > 0
+                  ? 'bg-teal-50 text-teal-700'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+              title="Filters"
+            >
+              <SlidersHorizontal size={18} />
+              {activeFilterCount > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-teal-600 text-white text-[10px] font-bold flex items-center justify-center">
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
+
             <button
               onClick={() => setShowAddVenueModal(true)}
-              className="p-2 hover:bg-gray-100 rounded-lg transition flex items-center gap-2 text-black font-semibold"
-              title="Add nursing room"
+              className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-slate-700 hover:bg-slate-100 transition font-medium text-sm"
+              title="Add a nursing room"
             >
-              <Plus size={20} />
-              <span className="text-sm">Add Room</span>
+              <Plus size={18} />
+              <span className="hidden sm:inline">Add room</span>
             </button>
+
             <button
               onClick={() => setViewMode(viewMode === 'map' ? 'list' : 'map')}
-              className="p-2 hover:bg-gray-100 rounded-lg transition text-black"
+              className="p-2.5 rounded-xl text-slate-700 hover:bg-slate-100 transition"
               title={viewMode === 'map' ? 'Switch to list' : 'Switch to map'}
             >
-              {viewMode === 'map' ? (
-                <List size={20} />
-              ) : (
-                <MapIcon size={20} />
-              )}
+              {viewMode === 'map' ? <List size={18} /> : <MapIcon size={18} />}
             </button>
           </div>
         </div>
+
+        {/* Filter strip */}
+        {showFilters && (
+          <div className="border-t border-slate-100 bg-white">
+            <div className="max-w-7xl mx-auto px-4 py-2.5 flex items-center gap-2 overflow-x-auto scroll-hide">
+              {FILTERS.map(({ key, label, icon: Icon }) => {
+                const active = filters[key];
+                return (
+                  <button
+                    key={key}
+                    onClick={() => handleFilterChange(key)}
+                    aria-pressed={active}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm font-medium whitespace-nowrap transition ${
+                      active
+                        ? 'bg-teal-600 border-teal-600 text-white'
+                        : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'
+                    }`}
+                  >
+                    <Icon size={14} />
+                    {label}
+                  </button>
+                );
+              })}
+
+              {activeFilterCount > 0 && (
+                <button
+                  onClick={() => setFilters(INITIAL_FILTERS)}
+                  className="px-3 py-1.5 text-sm font-medium text-slate-500 hover:text-slate-800 whitespace-nowrap"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </header>
 
       {/* Main content */}
@@ -195,7 +290,6 @@ export default function Home() {
         {/* Map view */}
         {viewMode === 'map' && (
           <div className="flex-1 relative">
-            {/* Map - background layer */}
             <Map
               userLat={userLat}
               userLng={userLng}
@@ -205,108 +299,90 @@ export default function Home() {
               onVenueSelect={setSelectedVenue}
             />
 
-            {/* UI Overlay - separate from map to avoid z-index issues */}
-            <div className="absolute inset-0 pointer-events-none">
-              {/* Search panel - top left */}
+            {/* Overlay, kept out of the map's own stacking context */}
+            <div className="absolute inset-0 pointer-events-none z-10">
               <div className="absolute top-4 left-4 right-4 max-w-sm pointer-events-auto">
                 <LocationSearch
-                  onLocationFound={(lat, lng) => {
-                    setUserLat(lat);
-                    setUserLng(lng);
-                    lastPositionRef.current = { lat, lng };
-                    // Explicit request, so this one does move the map.
-                    setRecenterAt(Date.now());
-                  }}
+                  onLocationFound={handleLocationFound}
                   onSearchComplete={() => {
-                    setSearchRadius(2000); // Reset to 2km for nearby results
-                    setShowSearchResults(true); // Show search results panel
+                    setSearchRadius(2000);
+                    setShowSearchResults(true);
                   }}
                   isLoading={loading}
+                  venueCount={venues.length}
                 />
               </div>
 
-              {/* Filters - bottom left */}
-              <div className="absolute bottom-4 left-4 max-w-sm bg-white rounded-lg shadow-md p-3 pointer-events-auto">
-                <p className="text-xs font-semibold text-gray-600 mb-2">Filters</p>
-                <div className="grid grid-cols-2 gap-2">
-                  {Object.entries(filters).map(([key, active]) => (
-                    <label
-                      key={key}
-                      className="flex items-center gap-2 cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={active}
-                        onChange={() => handleFilterChange(key)}
-                        className="w-4 h-4 rounded"
-                      />
-                      <span className="text-xs text-gray-700">
-                        {key.replace(/_/g, ' ')}
-                      </span>
-                    </label>
-                  ))}
+              {/* Legend */}
+              <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur rounded-xl shadow-md ring-1 ring-slate-200/80 px-3 py-2 pointer-events-auto">
+                <div className="flex items-center gap-3 text-xs text-slate-600">
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-teal-600" />
+                    Verified
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#F87171]" />
+                    Community
+                  </span>
                 </div>
               </div>
 
-              {/* Venue card - bottom right */}
+              {/* Venue card */}
               {selectedVenue && (
-                <div className="absolute bottom-4 right-4 max-w-sm pointer-events-auto">
-                  <div className="relative">
-                    <button
-                      onClick={() => setSelectedVenue(null)}
-                      className="absolute -top-2 -right-2 bg-red-500 hover:bg-red-600 text-white rounded-full p-1"
-                    >
-                      <X size={16} />
-                    </button>
-                    <VenueCard
-                      venue={selectedVenue}
-                      userLat={userLat}
-                      userLng={userLng}
-                    />
-                  </div>
+                <div className="absolute bottom-4 right-4 w-[min(100%-2rem,24rem)] pointer-events-auto">
+                  <VenueCard
+                    key={selectedVenue.id}
+                    venue={selectedVenue}
+                    onClose={() => setSelectedVenue(null)}
+                    userLat={userLat}
+                    userLng={userLng}
+                  />
                 </div>
               )}
 
-              {/* Search results panel - bottom of map (like Google Maps) */}
-              {showSearchResults && (
-                <div className="absolute bottom-4 left-4 right-4 max-w-2xl pointer-events-auto bg-white rounded-lg shadow-lg pointer-events-auto">
+              {/* Nearby results after a search */}
+              {showSearchResults && !selectedVenue && (
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-[min(100%-2rem,42rem)] pointer-events-auto bg-white rounded-2xl shadow-xl ring-1 ring-slate-200/80">
                   <div className="p-4">
-                    {/* Close button */}
-                    <div className="flex justify-between items-center mb-4">
-                      <h3 className="font-semibold text-gray-900">Nursing Rooms Nearby</h3>
+                    <div className="flex justify-between items-center mb-3">
+                      <h3 className="font-display font-bold text-slate-900">
+                        Rooms nearby
+                      </h3>
                       <button
                         onClick={() => {
                           setShowSearchResults(false);
-                          setSearchRadius(50000); // Back to showing all venues
+                          setSearchRadius(50000);
                         }}
-                        className="text-gray-500 hover:text-gray-700"
+                        aria-label="Close nearby results"
+                        className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
                       >
-                        <X size={20} />
+                        <X size={18} />
                       </button>
                     </div>
 
-                    {/* Venues list */}
-                    <div className="max-h-64 overflow-y-auto space-y-2">
+                    <div className="max-h-64 overflow-y-auto space-y-1.5 scroll-hide">
                       {venues.length === 0 ? (
-                        <p className="text-gray-600 text-sm">No nursing rooms found nearby</p>
+                        <p className="text-slate-500 text-sm py-4 text-center">
+                          No nursing rooms found nearby.
+                        </p>
                       ) : (
                         venues.map(venue => (
                           <button
                             key={venue.id}
                             onClick={() => setSelectedVenue(venue)}
-                            className="w-full text-left p-3 hover:bg-gray-50 rounded-lg transition border border-gray-200"
+                            className="w-full text-left p-3 rounded-xl hover:bg-slate-50 transition flex items-center gap-3"
                           >
-                            <div className="flex justify-between items-start">
-                              <div className="flex-1">
-                                <p className="font-semibold text-gray-900">{venue.name}</p>
-                                <p className="text-sm text-gray-600">{venue.address}</p>
-                              </div>
-                              <span className="text-sm font-semibold text-blue-600 ml-2">
-                                {venue.distance_meters < 1000
-                                  ? `${Math.round(venue.distance_meters)}m`
-                                  : `${(venue.distance_meters / 1000).toFixed(1)}km`}
-                              </span>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-semibold text-slate-900 truncate">
+                                {venue.name}
+                              </p>
+                              <p className="text-sm text-slate-500 truncate">
+                                {venue.address}
+                              </p>
                             </div>
+                            <span className="text-sm font-bold text-teal-700 shrink-0">
+                              {formatDistance(venue.distance_meters)}
+                            </span>
                           </button>
                         ))
                       )}
@@ -321,53 +397,115 @@ export default function Home() {
         {/* List view */}
         {viewMode === 'list' && (
           <div className="flex-1 flex flex-col bg-white">
-            <div className="flex-shrink-0 border-b p-4">
+            <div className="shrink-0 border-b border-slate-200 p-4 bg-slate-50">
               <LocationSearch
-                onLocationFound={(lat, lng) => {
-                  setUserLat(lat);
-                  setUserLng(lng);
-                }}
+                onLocationFound={handleLocationFound}
                 isLoading={loading}
+                venueCount={venues.length}
               />
             </div>
 
             <div className="flex-1 overflow-y-auto">
               {loading ? (
-                <div className="p-4 text-center text-gray-500">Loading...</div>
+                <div className="divide-y divide-slate-100">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <div key={i} className="p-4 animate-pulse">
+                      <div className="flex justify-between gap-4">
+                        <div className="flex-1 space-y-2">
+                          <div className="h-4 bg-slate-200 rounded w-2/5" />
+                          <div className="h-3 bg-slate-100 rounded w-3/5" />
+                          <div className="flex gap-1.5 pt-1">
+                            <div className="h-5 w-16 bg-slate-100 rounded-full" />
+                            <div className="h-5 w-20 bg-slate-100 rounded-full" />
+                          </div>
+                        </div>
+                        <div className="h-5 w-12 bg-slate-200 rounded" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
               ) : venues.length === 0 ? (
-                <div className="p-4 text-center text-gray-500">
-                  No venues found
+                <div className="p-12 text-center">
+                  <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto mb-4">
+                    <Baby size={26} className="text-slate-400" />
+                  </div>
+                  <p className="font-display font-bold text-slate-900">
+                    No rooms match
+                  </p>
+                  <p className="text-sm text-slate-500 mt-1">
+                    {activeFilterCount > 0
+                      ? 'Try removing a filter, or search a different area.'
+                      : 'Try searching a different area.'}
+                  </p>
+                  {activeFilterCount > 0 && (
+                    <button
+                      onClick={() => setFilters(INITIAL_FILTERS)}
+                      className="mt-4 px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold transition"
+                    >
+                      Clear filters
+                    </button>
+                  )}
                 </div>
               ) : (
-                <div className="divide-y">
-                  {venues.map(venue => (
-                    <button
-                      key={venue.id}
-                      onClick={() => {
-                        setSelectedVenue(venue);
-                        setViewMode('map');
-                      }}
-                      className="w-full text-left p-4 hover:bg-gray-50 transition"
-                    >
-                      <div className="flex justify-between items-start gap-2">
-                        <div className="flex-1">
-                          <h3 className="font-semibold text-gray-900">
-                            {venue.name}
-                          </h3>
-                          <p className="text-sm text-gray-600 mt-1">
+                <div className="divide-y divide-slate-100">
+                  {venues.map(venue => {
+                    const amenities = FILTERS.filter(
+                      f => venue[f.key as keyof VenueWithDetails]
+                    );
+
+                    return (
+                      <button
+                        key={venue.id}
+                        onClick={() => {
+                          setSelectedVenue(venue);
+                          setViewMode('map');
+                        }}
+                        className="w-full text-left p-4 hover:bg-slate-50 transition flex items-center gap-3"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="font-display font-bold text-slate-900">
+                              {venue.name}
+                            </h3>
+                            <span
+                              className={`text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ${
+                                isVerified(venue)
+                                  ? 'bg-teal-50 text-teal-700'
+                                  : 'bg-amber-50 text-amber-700'
+                              }`}
+                            >
+                              {isVerified(venue) ? 'Verified' : 'Community'}
+                            </span>
+                          </div>
+
+                          <p className="text-sm text-slate-500 mt-0.5 truncate">
                             {venue.address}
                           </p>
+
+                          {amenities.length > 0 && (
+                            <div className="flex gap-1.5 mt-2 flex-wrap">
+                              {amenities.map(({ key, label, icon: Icon }) => (
+                                <span
+                                  key={key}
+                                  className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full"
+                                >
+                                  <Icon size={11} />
+                                  {label}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                        <span className="text-lg font-semibold text-blue-600 flex-shrink-0">
-                          {venue.distance_meters < 1000
-                            ? `${Math.round(
-                                venue.distance_meters
-                              )}m`
-                            : `${(venue.distance_meters / 1000).toFixed(1)}km`}
-                        </span>
-                      </div>
-                    </button>
-                  ))}
+
+                        <div className="flex items-center gap-1 shrink-0">
+                          <span className="font-display text-base font-bold text-teal-700">
+                            {formatDistance(venue.distance_meters)}
+                          </span>
+                          <ChevronRight size={18} className="text-slate-300" />
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -375,7 +513,8 @@ export default function Home() {
         )}
       </div>
 
-      {/* Add Venue Modal */}
+      {/* Submissions go to the moderation queue rather than straight onto the
+          map, so there is nothing to refetch on success. */}
       <AddVenueModal
         isOpen={showAddVenueModal}
         onClose={() => setShowAddVenueModal(false)}

@@ -32,6 +32,22 @@ export function Map({
   const markersRef = useRef<globalThis.Map<string, L.Marker>>(new globalThis.Map());
   const userMarkerRef = useRef<L.Marker | null>(null);
 
+  // Leaflet caches the container size and only rechecks on a window resize, so
+  // anything that changes the container's height without resizing the window —
+  // expanding the filter strip, for one — leaves the tiles laid out for the old
+  // height, with pins drawn outside them.
+  useEffect(() => {
+    const container = document.getElementById('map');
+    if (!container || typeof ResizeObserver === 'undefined') return;
+
+    const observer = new ResizeObserver(() => {
+      mapRef.current?.invalidateSize();
+    });
+
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
   // Initialize map - Focus on Singapore
   useEffect(() => {
     if (!mapRef.current) {
@@ -108,8 +124,10 @@ export function Map({
 
   // Create custom icon with nursing symbol
   const createVenueIcon = (isSelected: boolean, isVerified: boolean) => {
-    const baseColor = isVerified ? '#22c55e' : '#ef4444'; // Green for verified, red for new
-    const glowColor = isSelected ? '#3b82f6' : baseColor;
+    // Teal for verified rooms, soft coral for community submissions. Coral rather
+    // than a hard alert red: an unverified room is a lead worth following, not an error.
+    const baseColor = isVerified ? '#0D9488' : '#F87171';
+    const glowColor = isSelected ? '#0F766E' : baseColor;
 
     const svgString = `
       <svg xmlns="http://www.w3.org/2000/svg" width="48" height="56" viewBox="0 0 48 56">
@@ -178,7 +196,7 @@ export function Map({
     // Add new markers
     venues.forEach(venue => {
       const isSelected = venue.id === selectedVenueId;
-      const isVerified = !venue.source || venue.source !== 'USER_SUBMITTED'; // Green if verified, red if user-submitted
+      const isVerified = !venue.source || venue.source !== 'USER_SUBMITTED'; // teal if verified, coral if community-submitted
 
       const marker = L.marker([venue.latitude, venue.longitude], {
         icon: createVenueIcon(isSelected, isVerified),
