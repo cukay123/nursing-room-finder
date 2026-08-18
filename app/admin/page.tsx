@@ -44,6 +44,10 @@ export default function AdminPage() {
   const [tab, setTab] = useState<AdminTab>('submissions');
   // Possible existing rooms each submission might be about, keyed by submission id.
   const [matches, setMatches] = useState<Record<string, VenueMatch[]>>({});
+  // Which room a submission should update, per submission. 'new' means create one.
+  // Deliberately starts unset when recommendations exist, so approving is a
+  // decision rather than a default.
+  const [selectedTarget, setSelectedTarget] = useState<Record<string, string>>({});
   const [editData, setEditData] = useState<Submission['payload']>({
     name: '',
     latitude: 0,
@@ -465,17 +469,19 @@ export default function AdminPage() {
                   })()}
                 </div>
 
-                {/* Possible existing rooms this submission may be about */}
+                {/* Recommendations. Choosing is a separate step from approving:
+                    proximity surfaces neighbours as well as the same place, so a
+                    one-click merge is too easy to fire at the wrong room. */}
                 {(matches[submission.id]?.length ?? 0) > 0 && (
                   <div className="px-6 pb-4">
                     <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
                       <p className="text-sm font-semibold text-amber-900">
-                        This may already be on the map
+                        Recommended: this may already be on the map
                       </p>
                       <p className="text-xs text-amber-800 mt-0.5">
-                        Merging adds the new details to the existing room instead of
-                        creating a second pin. Amenities are only ever switched on, and
-                        the existing name, address and position are kept.
+                        Pick one, then approve. Updating an existing room adds these
+                        details to it — amenities are only switched on, and its name,
+                        address and position are kept.
                       </p>
 
                       <div className="mt-3 space-y-2">
@@ -484,45 +490,90 @@ export default function AdminPage() {
                           // SingPost Centre. Merging into the wrong one corrupts a good
                           // record, so say plainly which signal produced the candidate.
                           const likelySame = match.name_similarity >= 0.6;
+                          const chosen = selectedTarget[submission.id] === match.id;
 
                           return (
-                          <div
-                            key={match.id}
-                            className="flex items-center justify-between gap-3 bg-white rounded-lg border border-amber-200 px-3 py-2"
-                          >
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <p className="font-semibold text-gray-900 truncate">
-                                  {match.name}
-                                </p>
-                                <span
-                                  className={`text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ${
-                                    likelySame
-                                      ? 'bg-teal-50 text-teal-700'
-                                      : 'bg-gray-100 text-gray-600'
-                                  }`}
-                                >
-                                  {likelySame ? 'Name matches' : 'Nearby — check the name'}
-                                </span>
-                              </div>
-                              <p className="text-xs text-gray-500 truncate">
-                                {match.distance_meters === null
-                                  ? 'distance unknown'
-                                  : `${match.distance_meters}m away`}
-                                {match.floor_level ? ` · ${match.floor_level}` : ''}
-                              </p>
-                            </div>
                             <button
-                              onClick={() => handleApprove(submission.id, match.id)}
-                              disabled={processingId === submission.id}
-                              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 hover:bg-teal-700 disabled:bg-gray-400 text-white rounded-lg text-sm font-semibold transition"
+                              key={match.id}
+                              type="button"
+                              onClick={() =>
+                                setSelectedTarget(prev => ({
+                                  ...prev,
+                                  [submission.id]: match.id,
+                                }))
+                              }
+                              aria-pressed={chosen}
+                              className={`w-full flex items-start gap-3 text-left rounded-lg border px-3 py-2 transition ${
+                                chosen
+                                  ? 'bg-teal-50 border-teal-500 ring-1 ring-teal-500'
+                                  : 'bg-white border-amber-200 hover:border-amber-300'
+                              }`}
                             >
-                              <Merge size={15} />
-                              Merge into this
+                              <span
+                                className={`mt-1 w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center ${
+                                  chosen ? 'border-teal-600' : 'border-gray-300'
+                                }`}
+                              >
+                                {chosen && (
+                                  <span className="w-2 h-2 rounded-full bg-teal-600" />
+                                )}
+                              </span>
+
+                              <span className="min-w-0">
+                                <span className="flex items-center gap-2 flex-wrap">
+                                  <span className="font-semibold text-gray-900">
+                                    {match.name}
+                                  </span>
+                                  <span
+                                    className={`text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ${
+                                      likelySame
+                                        ? 'bg-teal-100 text-teal-800'
+                                        : 'bg-gray-100 text-gray-600'
+                                    }`}
+                                  >
+                                    {likelySame ? 'Name matches' : 'Nearby — check the name'}
+                                  </span>
+                                </span>
+                                <span className="block text-xs text-gray-500">
+                                  {match.distance_meters === null
+                                    ? 'distance unknown'
+                                    : `${match.distance_meters}m away`}
+                                  {match.floor_level ? ` · ${match.floor_level}` : ''}
+                                </span>
+                              </span>
                             </button>
-                          </div>
                           );
                         })}
+
+                        {/* Always available, so "none of these" is an explicit choice
+                            rather than the default that happens when nothing is picked. */}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSelectedTarget(prev => ({ ...prev, [submission.id]: 'new' }))
+                          }
+                          aria-pressed={selectedTarget[submission.id] === 'new'}
+                          className={`w-full flex items-center gap-3 text-left rounded-lg border px-3 py-2 transition ${
+                            selectedTarget[submission.id] === 'new'
+                              ? 'bg-teal-50 border-teal-500 ring-1 ring-teal-500'
+                              : 'bg-white border-amber-200 hover:border-amber-300'
+                          }`}
+                        >
+                          <span
+                            className={`w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center ${
+                              selectedTarget[submission.id] === 'new'
+                                ? 'border-teal-600'
+                                : 'border-gray-300'
+                            }`}
+                          >
+                            {selectedTarget[submission.id] === 'new' && (
+                              <span className="w-2 h-2 rounded-full bg-teal-600" />
+                            )}
+                          </span>
+                          <span className="font-semibold text-gray-900">
+                            None of these — add as a new room
+                          </span>
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -538,22 +589,40 @@ export default function AdminPage() {
                     <X size={18} />
                     Reject
                   </button>
-                  <button
-                    onClick={() => handleApprove(submission.id)}
-                    disabled={processingId === submission.id}
-                    className="flex items-center gap-2 px-6 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white rounded-lg font-medium transition"
-                  >
-                    {processingId === submission.id ? (
-                      <Loader size={18} className="animate-spin" />
-                    ) : (
-                      <Check size={18} />
-                    )}
-                    {processingId === submission.id
-                      ? 'Processing...'
-                      : (matches[submission.id]?.length ?? 0) > 0
-                        ? 'Add as new room'
-                        : 'Approve'}
-                  </button>
+                  {(() => {
+                    const candidates = matches[submission.id] ?? [];
+                    const choice = selectedTarget[submission.id];
+                    // With recommendations on screen, approving without picking one
+                    // is what created duplicates in the first place.
+                    const mustChoose = candidates.length > 0 && !choice;
+                    const target =
+                      choice && choice !== 'new' ? choice : undefined;
+                    const targetName = candidates.find(m => m.id === target)?.name;
+
+                    return (
+                      <button
+                        onClick={() => handleApprove(submission.id, target)}
+                        disabled={processingId === submission.id || mustChoose}
+                        title={mustChoose ? 'Choose an option above first' : undefined}
+                        className="flex items-center gap-2 px-6 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-300 disabled:text-gray-500 text-white rounded-lg font-medium transition"
+                      >
+                        {processingId === submission.id ? (
+                          <Loader size={18} className="animate-spin" />
+                        ) : (
+                          <Check size={18} />
+                        )}
+                        {processingId === submission.id
+                          ? 'Processing...'
+                          : mustChoose
+                            ? 'Choose an option above'
+                            : targetName
+                              ? `Approve — update ${targetName}`
+                              : candidates.length > 0
+                                ? 'Approve — add as new room'
+                                : 'Approve'}
+                      </button>
+                    );
+                  })()}
                 </div>
               </div>
             ))}

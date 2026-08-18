@@ -245,8 +245,13 @@ Most submissions for a place already on the map are someone adding detail, not r
 Approving one created a second pin metres from the original. The original schema anticipated this —
 `submissions.venue_id` is commented "null if proposing a new venue" — but nothing ever set or read it.
 
-*Fixed:* the admin dashboard now shows candidate existing rooms beside each submission, with
-**Merge into this** alongside **Add as new room**.
+*Fixed:* the admin dashboard now shows candidate existing rooms as **recommendations you choose
+between** — each is selectable, alongside an explicit "None of these — add as a new room". Approving
+is a second, separate step, and the button is disabled until a choice is made, reading
+"Approve — update JEM" or "Approve — add as new room" so the outcome is stated before it happens.
+
+Choosing and approving are deliberately separate. A single one-click merge button is too easy to fire
+at the wrong room, and proximity surfaces neighbours as readily as the same place.
 
 Matching scores every room by name similarity (Dice coefficient over character bigrams, with mall
 words stripped) as well as proximity. Proximity alone is insufficient and an `ilike` prefilter does
